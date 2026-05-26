@@ -1,0 +1,159 @@
+.account-row {
+  cursor: pointer;
+  transition: background-color 0.1s ease;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.account-row:hover {
+  background-color: var(--bg-hover);
+}
+
+.account-row.selected {
+  background-color: var(--bg-selected);
+}
+
+.account-row td {
+  padding: var(--spacing-sm) var(--spacing-md);
+  vertical-align: middle;
+}
+
+.col-avatar {
+  width: 60px;
+  text-align: center;
+}
+
+.avatar-wrapper {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-md);
+  overflow: visible;
+  background-color: var(--bg-hover);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-color);
+}
+
+.avatar-wrapper .avatar-img {
+  border-radius: var(--radius-md);
+}
+
+.avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.col-user {
+  min-width: 150px;
+}
+
+.user-primary {
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 2px;
+}
+
+.user-secondary {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.col-alias {
+  min-width: 120px;
+}
+
+.alias-text {
+  font-style: italic;
+}
+
+.alias-text.muted {
+  color: var(--text-muted);
+}
+
+.alias-edit-input {
+  width: 100%;
+  padding: 4px 8px;
+  background-color: var(--bg-dark);
+  border: 1px solid var(--accent-primary);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: inherit;
+  font-family: inherit;
+  outline: none;
+}
+
+.col-group {
+  min-width: 100px;
+}
+
+.col-robux {
+  min-width: 100px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.robux-val {
+  color: var(--success);
+  font-weight: 500;
+}
+
+.col-last-used {
+  min-width: 100px;
+  font-size: 13px;
+  text-align: right;
+  padding-right: var(--spacing-lg) !important;
+}
+
+.text-muted {
+  color: var(--text-muted);
+}
+
+.text-secondary {
+  color: var(--text-secondary);
+}
+
+.text-warning {
+  color: var(--warning);
+}
+
+.ml-sm {
+  margin-left: var(--spacing-sm);
+}
+
+.ml-xs {
+  margin-left: var(--spacing-xs);
+}
+
+.stale-icon {
+  color: var(--warning);
+  vertical-align: text-bottom;
+}
+
+.presence-dot {
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--bg-dark);
+}
+
+.presence-dot.offline { background-color: #71717a; }
+.presence-dot.online { background-color: #00A2FF; }
+.presence-dot.in-game { background-color: #02B757; }
+.presence-dot.in-studio { background-color: #4629D8; }
+
+/* Pulse animation for online states */
+.presence-dot.online,
+.presence-dot.in-game,
+.presence-dot.in-studio {
+  animation: presence-pulse 2s ease-in-out infinite;
+}
+
+@keyframes presence-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 currentColor; }
+  50% { box-shadow: 0 0 0 3px transparent; }
+}

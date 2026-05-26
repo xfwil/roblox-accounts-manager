@@ -1,0 +1,140 @@
+.account-list-container {
+  flex: 1;
+  overflow: auto;
+  position: relative;
+  background-color: var(--bg-dark);
+}
+
+.account-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  margin-bottom: 48px; /* Space for WatcherPanel at bottom */
+}
+
+.account-table th {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background-color: var(--bg-panel);
+  color: var(--text-secondary);
+  font-weight: 500;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  padding: var(--spacing-sm) var(--spacing-md);
+  text-align: left;
+  border-bottom: 1px solid var(--border-color);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.1);
+}
+
+.account-list-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: var(--spacing-md);
+  color: var(--text-muted);
+}
+
+.loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid rgba(255, 255, 255, 0.1);
+  border-radius: 50%;
+  border-top-color: var(--accent-primary);
+  animation: spin 1s ease-in-out infinite;
+}
+
+.error-state {
+  color: var(--error);
+}
+
+.error-details {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  max-width: 80%;
+  text-align: center;
+  word-break: break-all;
+}
+
+/* Sortable Headers */
+.sortable-header {
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.15s;
+}
+
+.sortable-header:hover {
+  color: var(--text-primary);
+}
+
+.sort-arrow {
+  font-size: 10px;
+  color: var(--accent-primary);
+}
+
+/* Group Assignment Dialog */
+.group-dialog {
+  max-width: 420px;
+  width: 100%;
+}
+
+.group-dialog .dialog-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--spacing-md) var(--spacing-lg);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.group-dialog .dialog-header h3 {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.group-dialog .dialog-body {
+  padding: var(--spacing-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.group-dialog .dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-md) var(--spacing-lg);
+  border-top: 1px solid var(--border-color);
+}
+
+.group-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+}
+
+.group-chip {
+  padding: 4px 12px;
+  border-radius: var(--radius-full);
+  font-size: 13px;
+  font-weight: 500;
+  background-color: var(--bg-hover);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.group-chip:hover {
+  background-color: var(--bg-selected);
+  color: var(--text-primary);
+  border-color: var(--accent-primary);
+}
+
+.group-chip.active {
+  background-color: var(--accent-primary);
+  color: white;
+  border-color: var(--accent-primary);
+}
