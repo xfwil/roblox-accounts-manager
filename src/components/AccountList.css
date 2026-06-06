@@ -28,6 +28,11 @@
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.1);
 }
 
+.account-table th.col-last-used,
+.account-table th.col-date-added {
+  text-align: right;
+}
+
 .account-list-empty {
   display: flex;
   flex-direction: column;
