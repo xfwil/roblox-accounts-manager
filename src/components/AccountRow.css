@@ -18,7 +18,7 @@
 }
 
 .col-avatar {
-  width: 60px;
+  width: 50px;
   text-align: center;
 }
 
@@ -46,7 +46,8 @@
 }
 
 .col-user {
-  min-width: 150px;
+  width: 20%;
+  min-width: 140px;
 }
 
 .user-primary {
@@ -61,7 +62,8 @@
 }
 
 .col-alias {
-  min-width: 120px;
+  width: 14%;
+  min-width: 100px;
 }
 
 .alias-text {
@@ -85,11 +87,13 @@
 }
 
 .col-group {
-  min-width: 100px;
+  width: 14%;
+  min-width: 90px;
 }
 
 .col-robux {
-  min-width: 100px;
+  width: 10%;
+  min-width: 80px;
   font-family: var(--font-mono);
   font-size: 13px;
 }
@@ -100,14 +104,16 @@
 }
 
 .col-last-used {
-  min-width: 100px;
+  width: 12%;
+  min-width: 90px;
   font-size: 13px;
   text-align: right;
   padding-right: var(--spacing-md) !important;
 }
 
 .col-date-added {
-  min-width: 100px;
+  width: 12%;
+  min-width: 90px;
   font-size: 13px;
   text-align: right;
   padding-right: var(--spacing-lg) !important;
