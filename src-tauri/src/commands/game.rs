@@ -26,35 +26,7 @@ pub async fn join_game(
         store.get_cookie(&uuid)?
     };
 
-    // Update last_used timestamp
-    {
-        let mut store = state.store.lock().map_err(|e| {
-            AppError::Other(format!("Lock poisoned: {}", e))
-        })?;
-        let mut account = store.get_account(&uuid)?.clone();
-        account.last_used = Some(chrono::Utc::now());
-        store.update_account(account)?;
-    }
-
-    // Detect if this is a share code (alphanumeric, non-numeric, non-UUID).
-    // Share codes should be launched via deep link protocol — the Roblox player
-    // resolves them internally. The sharelinks API requires app-level auth that
-    // external tools can't provide (returns 403).
-    if let Some(ref lc) = link_code {
-        let is_numeric = lc.chars().all(|c| c.is_ascii_digit()) && lc.len() >= 8;
-        let is_uuid = lc.len() == 36 && lc.chars().filter(|&c| c == '-').count() == 4;
-
-        if !is_numeric && !is_uuid && !lc.is_empty() {
-            // This is a share code — launch via roblox:// deep link protocol.
-            // The Roblox Player (or Bloxstrap/Fishstrap) resolves the share code
-            // internally. This is the same method used by NatroMacro, FishSol, etc.
-            log::info!("[{}] Share code detected: {}, launching via deep link", account_id, lc);
-            let pid = RobloxClient::launch_share_link(lc)?;
-            return Ok(pid);
-        }
-    }
-
-    // If we have a link_code (numeric or UUID), resolve the access_code.
+    // If we have a link_code, resolve the access_code (UUID) and numeric linkCode.
     // PlaceLauncher REQUIRES a valid accessCode — launching without it gives Error 524.
     let (access_code, numeric_link_code) = if let Some(ref lc) = link_code {
         log::info!("[{}] Resolving access code for place_id={}, link_code={}", account_id, place_id, lc);
@@ -95,6 +67,16 @@ pub async fn join_game(
     };
 
     let browser_tracker_id = rand::random::<u64>() % 1_000_000_000;
+
+    // Update last_used timestamp
+    {
+        let mut store = state.store.lock().map_err(|e| {
+            AppError::Other(format!("Lock poisoned: {}", e))
+        })?;
+        let mut account = store.get_account(&uuid)?.clone();
+        account.last_used = Some(chrono::Utc::now());
+        store.update_account(account)?;
+    }
 
     let pid = RobloxClient::launch_roblox(&auth_ticket, &options, browser_tracker_id)?;
     Ok(pid)

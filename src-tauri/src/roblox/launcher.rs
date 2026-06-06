@@ -30,63 +30,33 @@ pub struct LaunchOptions {
 }
 
 impl RobloxClient {
-    /// Get an authentication ticket for launching Roblox.
-    /// Handles CSRF 403 retry: if the first request returns 403 with a fresh x-csrf-token,
-    /// we retry with that token (same pattern as Roblox's own launcher).
+    /// Get an authentication ticket for launching Roblox
     pub async fn get_auth_ticket(&self, cookie: &str) -> AppResult<String> {
-        let cookie_header = format!(
-            ".ROBLOSECURITY={}",
-            cookie.trim_start_matches(".ROBLOSECURITY=")
-        );
+        let csrf = self.get_csrf_token(cookie).await?;
 
-        // First, get a CSRF token
-        let mut csrf = self.get_csrf_token(cookie).await?;
+        let resp = self
+            .client()
+            .post("https://auth.roblox.com/v1/authentication-ticket/")
+            .header("Cookie", format!(".ROBLOSECURITY={}", cookie.trim_start_matches(".ROBLOSECURITY=")))
+            .header("x-csrf-token", &csrf)
+            .header("Content-Type", "application/json")
+            .header("Referer", "https://www.roblox.com")
+            .body("{}")
+            .send()
+            .await?;
 
-        // Try up to 3 times (CSRF can expire between fetch and use)
-        for attempt in 0..3 {
-            let resp = self
-                .client()
-                .post("https://auth.roblox.com/v1/authentication-ticket/")
-                .header("Cookie", &cookie_header)
-                .header("x-csrf-token", &csrf)
-                .header("Content-Type", "application/json")
-                .header("Referer", "https://www.roblox.com")
-                .header("Origin", "https://www.roblox.com")
-                .body("{}")
-                .send()
-                .await?;
-
-            let status = resp.status();
-
-            // Success — extract ticket from response header
-            if status.is_success() {
-                return resp
-                    .headers()
-                    .get("rbx-authentication-ticket")
-                    .and_then(|v| v.to_str().ok())
-                    .map(|s| s.to_string())
-                    .ok_or_else(|| AppError::RobloxApi("No auth ticket in response".into()));
-            }
-
-            // 403 with fresh CSRF token — retry with the new token
-            if status.as_u16() == 403 {
-                if let Some(new_csrf) = resp.headers().get("x-csrf-token").and_then(|v| v.to_str().ok()) {
-                    log::info!("Auth ticket got 403 with new CSRF on attempt {}, retrying", attempt + 1);
-                    csrf = new_csrf.to_string();
-                    continue;
-                }
-            }
-
-            // Other errors — fail immediately
+        if !resp.status().is_success() {
             return Err(AppError::RobloxApi(format!(
-                "Failed to get auth ticket: {} (attempt {})",
-                status, attempt + 1
+                "Failed to get auth ticket: {}",
+                resp.status()
             )));
         }
 
-        Err(AppError::RobloxApi(
-            "Failed to get auth ticket after 3 CSRF retries".into(),
-        ))
+        resp.headers()
+            .get("rbx-authentication-ticket")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string())
+            .ok_or_else(|| AppError::RobloxApi("No auth ticket in response".into()))
     }
 
     /// Get the Roblox Player installation path
@@ -547,7 +517,7 @@ impl RobloxClient {
         }
     }
 
-    /// Sharelinks API resolution with internal CSRF retry.
+    /// Sharelinks API resolution with retryable error indication.
     /// Returns Ok((access_code, Option<numeric_link_code>)) or Err((message, is_retryable)).
     async fn resolve_via_sharelinks_api_with_status(
         &self,
@@ -556,140 +526,128 @@ impl RobloxClient {
         place_id: u64,
         link_code: &str,
     ) -> Result<(String, Option<String>), (String, bool)> {
-        let mut current_csrf = csrf.to_string();
+        let resp = self
+            .client()
+            .post("https://apis.roblox.com/sharelinks/v1/resolve-link")
+            .header("Cookie", cookie_header)
+            .header("x-csrf-token", csrf)
+            .header("Content-Type", "application/json")
+            .header("Referer", "https://www.roblox.com")
+            .json(&serde_json::json!({
+                "linkId": link_code,
+                "linkType": "Server"
+            }))
+            .send()
+            .await
+            .map_err(|e| (format!("HTTP error: {}", e), true))?;
 
-        // Retry up to 3 times for CSRF token issues
-        for csrf_attempt in 0..3 {
-            let resp = self
-                .client()
-                .post("https://apis.roblox.com/sharelinks/v1/resolve-link")
-                .header("Cookie", cookie_header)
-                .header("x-csrf-token", &current_csrf)
-                .header("Content-Type", "application/json")
-                .header("Referer", "https://www.roblox.com")
-                .header("Origin", "https://www.roblox.com")
-                .json(&serde_json::json!({
-                    "linkId": link_code,
-                    "linkType": "Server"
-                }))
-                .send()
-                .await
-                .map_err(|e| (format!("HTTP error: {}", e), true))?;
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        log::info!("Sharelinks API: status={}, body={}", status, &body[..body.len().min(500)]);
 
-            let status = resp.status();
-
-            // Handle 403 — grab fresh CSRF from response header and retry
-            if status.as_u16() == 403 {
-                if let Some(new_csrf) = resp.headers().get("x-csrf-token").and_then(|v| v.to_str().ok()) {
-                    log::info!("Sharelinks API got 403 with fresh CSRF on attempt {}, retrying", csrf_attempt + 1);
-                    current_csrf = new_csrf.to_string();
-                    continue;
-                }
-                // 403 without CSRF header — permanent auth failure
-                return Err(("Authentication rejected (403, no CSRF in response)".into(), false));
-            }
-
-            let body = resp.text().await.unwrap_or_default();
-            log::info!("Sharelinks API: status={}, body={}", status, &body[..body.len().min(500)]);
-
-            // Classify HTTP status for retry logic
-            if status.as_u16() == 429 {
-                return Err(("Rate limited (429)".into(), true));
-            }
-            if status.is_server_error() {
-                return Err((format!("Server error: {}", status), true));
-            }
-            if status.as_u16() == 400 || status.as_u16() == 404 {
-                return Err((format!("Invalid link code ({}): {}", status, &body[..body.len().min(200)]), false));
-            }
-            if !status.is_success() {
-                return Err((format!("Unexpected status {}: {}", status, &body[..body.len().min(200)]), true));
-            }
-
-            let json: serde_json::Value = serde_json::from_str(&body)
-                .map_err(|_| (format!("Invalid JSON response: {}", &body[..body.len().min(200)]), false))?;
-
-            // Try multiple response shapes — Roblox may change the structure
-            let invite_data = json.get("privateServerInviteData")
-                .or_else(|| json.get("linkData"))
-                .or_else(|| json.get("data"));
-
-            let invite_data = match invite_data {
-                Some(d) => d,
-                None => {
-                    // If the top-level JSON itself has accessCode or privateServerId, use it directly
-                    if let Some(ac) = json.get("accessCode").and_then(|v| v.as_str()) {
-                        return Ok((ac.to_string(), None));
-                    }
-                    if let Some(lc) = json.get("linkCode").and_then(|v| v.as_str()) {
-                        if lc.len() == 36 && lc.chars().filter(|&c| c == '-').count() == 4 {
-                            return Ok((lc.to_string(), None));
-                        }
-                    }
-                    return Err((format!("No invite data in response: {}", &body[..body.len().min(300)]), false));
-                }
-            };
-
-            // Check if accessCode is directly available
-            if let Some(ac) = invite_data.get("accessCode").and_then(|v| v.as_str()) {
-                let nlc = invite_data.get("linkCode").and_then(|v| {
-                    v.as_str().map(|s| s.to_string())
-                        .or_else(|| v.as_u64().map(|n| n.to_string()))
-                }).filter(|s| s.chars().all(|c| c.is_ascii_digit()));
-                return Ok((ac.to_string(), nlc));
-            }
-
-            // Check linkCode field — Roblox returns the privateServerLinkCode here.
-            if let Some(lc) = invite_data.get("linkCode").and_then(|v| {
-                v.as_str().map(|s| s.to_string())
-                    .or_else(|| v.as_u64().map(|n| n.to_string()))
-                    .or_else(|| v.as_i64().map(|n| n.to_string()))
-            }) {
-                // If it's a UUID, it's the accessCode directly
-                if lc.len() == 36 && lc.chars().filter(|&c| c == '-').count() == 4 {
-                    log::info!("Sharelinks returned linkCode as UUID accessCode: {}", lc);
-                    return Ok((lc, None));
-                }
-                // It's a numeric privateServerLinkCode — resolve via HTML parsing
-                if !lc.is_empty() {
-                    log::info!("Sharelinks returned numeric linkCode={}, resolving via HTML parsing", lc);
-                    let numeric_lc = Some(lc.clone());
-                    let resolved_place_id = invite_data.get("placeId")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(place_id);
-
-                    // Try HTML parsing with the numeric linkCode
-                    if let Ok(access_code) = self.parse_access_code_from_page(
-                        &format!("https://www.roblox.com/games/{}?privateServerLinkCode={}", resolved_place_id, lc),
-                        cookie_header, &current_csrf,
-                    ).await {
-                        log::info!("Resolved accessCode via HTML from sharelinks linkCode: {}", access_code);
-                        return Ok((access_code, numeric_lc));
-                    }
-                    // Try web.roblox.com fallback
-                    if let Ok(access_code) = self.parse_access_code_from_page(
-                        &format!("https://web.roblox.com/games/{}?privateServerLinkCode={}", resolved_place_id, lc),
-                        cookie_header, &current_csrf,
-                    ).await {
-                        log::info!("Resolved accessCode via HTML (web) from sharelinks linkCode: {}", access_code);
-                        return Ok((access_code, numeric_lc));
-                    }
-                    log::warn!("HTML parsing failed for sharelinks linkCode={}", lc);
-                }
-            }
-
-            // Fallback: Get privateServerId and resolve accessCode from private-servers list
-            let ps_id = invite_data.get("privateServerId")
-                .and_then(|v| v.as_u64())
-                .ok_or_else(|| ("No privateServerId, accessCode, or linkCode in sharelinks response".to_string(), false))?;
-
-            return self.resolve_access_code_by_server_id(cookie_header, &current_csrf, place_id, ps_id)
-                .await
-                .map(|ac| (ac, None))
-                .map_err(|e| (format!("Failed to resolve by server ID: {}", e), true));
+        // Classify HTTP status for retry logic
+        if status.as_u16() == 429 {
+            return Err(("Rate limited (429)".into(), true));
+        }
+        if status.is_server_error() {
+            return Err((format!("Server error: {}", status), true));
+        }
+        if status.as_u16() == 403 {
+            // CSRF token expired — retryable with fresh token
+            return Err(("CSRF token rejected (403)".into(), true));
+        }
+        if status.as_u16() == 400 || status.as_u16() == 404 {
+            return Err((format!("Invalid link code ({}): {}", status, &body[..body.len().min(200)]), false));
+        }
+        if !status.is_success() {
+            return Err((format!("Unexpected status {}: {}", status, &body[..body.len().min(200)]), true));
         }
 
-        Err(("CSRF token rejected after 3 retries".into(), false))
+        let json: serde_json::Value = serde_json::from_str(&body)
+            .map_err(|_| (format!("Invalid JSON response: {}", &body[..body.len().min(200)]), false))?;
+
+        // Try multiple response shapes — Roblox may change the structure
+        let invite_data = json.get("privateServerInviteData")
+            .or_else(|| json.get("linkData"))
+            .or_else(|| json.get("data"));
+
+        let invite_data = match invite_data {
+            Some(d) => d,
+            None => {
+                // If the top-level JSON itself has accessCode or privateServerId, use it directly
+                if let Some(ac) = json.get("accessCode").and_then(|v| v.as_str()) {
+                    return Ok((ac.to_string(), None));
+                }
+                if let Some(lc) = json.get("linkCode").and_then(|v| v.as_str()) {
+                    if lc.len() == 36 && lc.chars().filter(|&c| c == '-').count() == 4 {
+                        return Ok((lc.to_string(), None));
+                    }
+                }
+                return Err((format!("No invite data in response: {}", &body[..body.len().min(300)]), false));
+            }
+        };
+
+        // Check if accessCode is directly available
+        if let Some(ac) = invite_data.get("accessCode").and_then(|v| v.as_str()) {
+            // Also grab the numeric linkCode if present
+            let nlc = invite_data.get("linkCode").and_then(|v| {
+                v.as_str().map(|s| s.to_string())
+                    .or_else(|| v.as_u64().map(|n| n.to_string()))
+            }).filter(|s| s.chars().all(|c| c.is_ascii_digit()));
+            return Ok((ac.to_string(), nlc));
+        }
+
+        // Check linkCode field — Roblox returns the privateServerLinkCode here.
+        // If it's a UUID, it IS the accessCode. If numeric, use HTML parsing to resolve.
+        if let Some(lc) = invite_data.get("linkCode").and_then(|v| {
+            // linkCode can be a string or a number in the JSON
+            v.as_str().map(|s| s.to_string())
+                .or_else(|| v.as_u64().map(|n| n.to_string()))
+                .or_else(|| v.as_i64().map(|n| n.to_string()))
+        }) {
+            // If it's a UUID, it's the accessCode directly
+            if lc.len() == 36 && lc.chars().filter(|&c| c == '-').count() == 4 {
+                log::info!("Sharelinks returned linkCode as UUID accessCode: {}", lc);
+                return Ok((lc, None));
+            }
+            // It's a numeric privateServerLinkCode — resolve via HTML parsing
+            if !lc.is_empty() {
+                log::info!("Sharelinks returned numeric linkCode={}, resolving via HTML parsing", lc);
+                let numeric_lc = Some(lc.clone());
+                // Also extract placeId from response if available (more reliable)
+                let resolved_place_id = invite_data.get("placeId")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(place_id);
+
+                // Try HTML parsing with the numeric linkCode
+                if let Ok(access_code) = self.parse_access_code_from_page(
+                    &format!("https://www.roblox.com/games/{}?privateServerLinkCode={}", resolved_place_id, lc),
+                    cookie_header, csrf,
+                ).await {
+                    log::info!("Resolved accessCode via HTML from sharelinks linkCode: {}", access_code);
+                    return Ok((access_code, numeric_lc));
+                }
+                // Try web.roblox.com fallback
+                if let Ok(access_code) = self.parse_access_code_from_page(
+                    &format!("https://web.roblox.com/games/{}?privateServerLinkCode={}", resolved_place_id, lc),
+                    cookie_header, csrf,
+                ).await {
+                    log::info!("Resolved accessCode via HTML (web) from sharelinks linkCode: {}", access_code);
+                    return Ok((access_code, numeric_lc));
+                }
+                log::warn!("HTML parsing failed for sharelinks linkCode={}", lc);
+            }
+        }
+
+        // Fallback: Get privateServerId and resolve accessCode from private-servers list
+        let ps_id = invite_data.get("privateServerId")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| ("No privateServerId, accessCode, or linkCode in sharelinks response".to_string(), false))?;
+
+        self.resolve_access_code_by_server_id(cookie_header, csrf, place_id, ps_id)
+            .await
+            .map(|ac| (ac, None))
+            .map_err(|e| (format!("Failed to resolve by server ID: {}", e), true))
     }
 
     /// Fetch accessCode for a private server by its privateServerId.
@@ -795,16 +753,12 @@ impl RobloxClient {
         Err(AppError::RobloxApi("Access code not found in page HTML".into()))
     }
 
-    /// Launch Roblox to join a share link directly via deep link protocol.
-    /// The Roblox Player (or strap launcher) resolves the share code internally
-    /// using its own authenticated session.
+    /// Launch Roblox to join a share link directly via protocol handler.
     pub fn launch_share_link(share_code: &str) -> AppResult<u32> {
         let uri = format!(
             "roblox://navigation/share_links?type=Server&code={}",
             share_code
         );
-
-        log::info!("Launching share code via deep link: {}", uri);
 
         #[cfg(target_os = "windows")]
         {
