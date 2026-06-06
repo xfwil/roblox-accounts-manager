@@ -38,6 +38,15 @@ function getRelativeTime(dateString: string | null): string {
   return `${Math.floor(diffInDays / 365)}y ago`;
 }
 
+function formatDate(dateString: string): string {
+  const date = new Date(dateString);
+  return date.toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
+}
+
 function getDaysSinceUsed(dateString: string | null): number {
   if (!dateString) return Infinity;
   const date = new Date(dateString);
@@ -169,6 +178,9 @@ export function AccountRow({
             <line x1="12" y1="17" x2="12.01" y2="17"></line>
           </svg>
         )}
+      </td>
+      <td className="col-date-added">
+        <span className="text-secondary">{formatDate(account.created_at)}</span>
       </td>
     </tr>
   );

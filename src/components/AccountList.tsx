@@ -4,7 +4,7 @@ import { AccountRow } from './AccountRow';
 import { AccountContextMenu } from './AccountContextMenu';
 import './AccountList.css';
 
-type SortField = 'username' | 'alias' | 'group' | 'robux' | 'last_used' | 'sort_order';
+type SortField = 'username' | 'alias' | 'group' | 'robux' | 'last_used' | 'created_at' | 'sort_order';
 type SortDirection = 'asc' | 'desc';
 
 interface AccountListProps {
@@ -119,6 +119,12 @@ export function AccountList({
           const aTime = a.last_used ? new Date(a.last_used).getTime() : 0;
           const bTime = b.last_used ? new Date(b.last_used).getTime() : 0;
           cmp = aTime - bTime;
+          break;
+        }
+        case 'created_at': {
+          const aCreated = new Date(a.created_at).getTime();
+          const bCreated = new Date(b.created_at).getTime();
+          cmp = aCreated - bCreated;
           break;
         }
         case 'sort_order':
@@ -273,6 +279,9 @@ export function AccountList({
             </th>
             <th className="col-last-used sortable-header" onClick={() => handleSort('last_used')}>
               Last Used{sortIndicator('last_used')}
+            </th>
+            <th className="col-date-added sortable-header" onClick={() => handleSort('created_at')}>
+              Date Added{sortIndicator('created_at')}
             </th>
           </tr>
         </thead>

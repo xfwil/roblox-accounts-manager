@@ -103,6 +103,13 @@
   min-width: 100px;
   font-size: 13px;
   text-align: right;
+  padding-right: var(--spacing-md) !important;
+}
+
+.col-date-added {
+  min-width: 100px;
+  font-size: 13px;
+  text-align: right;
   padding-right: var(--spacing-lg) !important;
 }
 
