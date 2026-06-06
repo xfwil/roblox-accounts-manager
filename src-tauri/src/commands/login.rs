@@ -387,33 +387,13 @@ pub async fn open_browser(
     })();
     "#;
 
-    // Cookie + redirect script: runs at document_start on every navigation.
-    // Sets cookie immediately, then if on /login page, redirects to target without waiting.
-    let cookie_redirect_script = format!(
-        r#"
-        (function() {{
-            'use strict';
-            if (!location.hostname.includes('roblox.com')) return;
-            // Always set cookie at document_start (before page JS reads it)
-            document.cookie = ".ROBLOSECURITY=expired; domain=.roblox.com; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
-            document.cookie = ".ROBLOSECURITY={cookie}; domain=.roblox.com; path=/; secure; max-age=31536000";
-            // If we landed on login/challenge page, redirect to target immediately
-            if (!window.__RAM_REDIRECTED__ && (location.pathname.startsWith('/login') || location.pathname.startsWith('/Login'))) {{
-                window.__RAM_REDIRECTED__ = true;
-                window.location.replace("{url}");
-            }}
-        }})();
-        "#,
-        cookie = escaped_cookie,
-        url = target_url,
-    );
-
     // Chrome-like user agent so Roblox serves the full desktop site
     let user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
-    // Build browser window — navigates directly to target URL
-    // initialization_script fires at document_start (before any page JS),
-    // so cookie is set before Roblox reads it. data_directory isolates per account.
+    // Build browser window — navigates to roblox.com/login first.
+    // on_page_load injects cookie once we're on roblox.com domain (document.cookie
+    // only works when the page origin matches the cookie domain).
+    // initialization_script handles address bar + window.open interception.
     let _browser_window = WebviewWindowBuilder::new(
         &app,
         &window_label,
@@ -426,11 +406,47 @@ pub async fn open_browser(
     .resizable(true)
     .user_agent(user_agent)
     .data_directory(browser_data_dir)
-    .initialization_script(&cookie_redirect_script)
     .initialization_script(address_bar_script)
+    .on_page_load(build_cookie_handler(escaped_cookie, target_url))
     .build()
     .map_err(|e| AppError::Other(format!("Failed to create browser window: {}", e)))?;
 
     Ok(())
+}
+
+/// on_page_load handler: injects cookie on first roblox.com page, then redirects to target.
+fn build_cookie_handler(
+    escaped_cookie: String,
+    target_url: String,
+) -> impl Fn(tauri::WebviewWindow, tauri::webview::PageLoadPayload<'_>) + Send + Sync + 'static {
+    let cookie_injected = Arc::new(AtomicBool::new(false));
+
+    move |window, payload| {
+        if payload.event() != PageLoadEvent::Finished {
+            return;
+        }
+        let url_str = payload.url().to_string();
+
+        // Only inject on roblox.com pages (document.cookie needs matching origin)
+        if !url_str.contains("roblox.com") {
+            return;
+        }
+
+        // First time on roblox.com: inject cookie and redirect to target
+        if !cookie_injected.swap(true, Ordering::SeqCst) {
+            let js = format!(
+                r#"
+                (function() {{
+                    document.cookie = ".ROBLOSECURITY=expired; domain=.roblox.com; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+                    document.cookie = ".ROBLOSECURITY={cookie}; domain=.roblox.com; path=/; secure; max-age=31536000";
+                    window.location.replace("{url}");
+                }})();
+                "#,
+                cookie = escaped_cookie,
+                url = target_url,
+            );
+            let _ = window.eval(&js);
+        }
+    }
 }
 
