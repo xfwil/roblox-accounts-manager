@@ -45,14 +45,11 @@ pub async fn join_game(
         let is_uuid = lc.len() == 36 && lc.chars().filter(|&c| c == '-').count() == 4;
 
         if !is_numeric && !is_uuid && !lc.is_empty() {
-            // This is a share code — launch via deep link protocol
+            // This is a share code — launch via roblox:// deep link protocol.
+            // The Roblox Player (or Bloxstrap/Fishstrap) resolves the share code
+            // internally. This is the same method used by NatroMacro, FishSol, etc.
             log::info!("[{}] Share code detected: {}, launching via deep link", account_id, lc);
-
-            // Get auth ticket first (needed to authenticate the player session)
-            let auth_ticket = state.roblox.get_auth_ticket(&cookie).await?;
-
-            // Launch via share_links deep link with auth
-            let pid = RobloxClient::launch_share_link_with_auth(lc, &auth_ticket)?;
+            let pid = RobloxClient::launch_share_link(lc)?;
             return Ok(pid);
         }
     }
