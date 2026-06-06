@@ -30,33 +30,63 @@ pub struct LaunchOptions {
 }
 
 impl RobloxClient {
-    /// Get an authentication ticket for launching Roblox
+    /// Get an authentication ticket for launching Roblox.
+    /// Handles CSRF 403 retry: if the first request returns 403 with a fresh x-csrf-token,
+    /// we retry with that token (same pattern as Roblox's own launcher).
     pub async fn get_auth_ticket(&self, cookie: &str) -> AppResult<String> {
-        let csrf = self.get_csrf_token(cookie).await?;
+        let cookie_header = format!(
+            ".ROBLOSECURITY={}",
+            cookie.trim_start_matches(".ROBLOSECURITY=")
+        );
 
-        let resp = self
-            .client()
-            .post("https://auth.roblox.com/v1/authentication-ticket/")
-            .header("Cookie", format!(".ROBLOSECURITY={}", cookie.trim_start_matches(".ROBLOSECURITY=")))
-            .header("x-csrf-token", &csrf)
-            .header("Content-Type", "application/json")
-            .header("Referer", "https://www.roblox.com")
-            .body("{}")
-            .send()
-            .await?;
+        // First, get a CSRF token
+        let mut csrf = self.get_csrf_token(cookie).await?;
 
-        if !resp.status().is_success() {
+        // Try up to 3 times (CSRF can expire between fetch and use)
+        for attempt in 0..3 {
+            let resp = self
+                .client()
+                .post("https://auth.roblox.com/v1/authentication-ticket/")
+                .header("Cookie", &cookie_header)
+                .header("x-csrf-token", &csrf)
+                .header("Content-Type", "application/json")
+                .header("Referer", "https://www.roblox.com")
+                .header("Origin", "https://www.roblox.com")
+                .body("{}")
+                .send()
+                .await?;
+
+            let status = resp.status();
+
+            // Success — extract ticket from response header
+            if status.is_success() {
+                return resp
+                    .headers()
+                    .get("rbx-authentication-ticket")
+                    .and_then(|v| v.to_str().ok())
+                    .map(|s| s.to_string())
+                    .ok_or_else(|| AppError::RobloxApi("No auth ticket in response".into()));
+            }
+
+            // 403 with fresh CSRF token — retry with the new token
+            if status.as_u16() == 403 {
+                if let Some(new_csrf) = resp.headers().get("x-csrf-token").and_then(|v| v.to_str().ok()) {
+                    log::info!("Auth ticket got 403 with new CSRF on attempt {}, retrying", attempt + 1);
+                    csrf = new_csrf.to_string();
+                    continue;
+                }
+            }
+
+            // Other errors — fail immediately
             return Err(AppError::RobloxApi(format!(
-                "Failed to get auth ticket: {}",
-                resp.status()
+                "Failed to get auth ticket: {} (attempt {})",
+                status, attempt + 1
             )));
         }
 
-        resp.headers()
-            .get("rbx-authentication-ticket")
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string())
-            .ok_or_else(|| AppError::RobloxApi("No auth ticket in response".into()))
+        Err(AppError::RobloxApi(
+            "Failed to get auth ticket after 3 CSRF retries".into(),
+        ))
     }
 
     /// Get the Roblox Player installation path
