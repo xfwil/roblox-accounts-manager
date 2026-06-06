@@ -8,7 +8,7 @@
 .account-table {
   width: 100%;
   border-collapse: collapse;
-  table-layout: fixed;
+  table-layout: auto;
   margin-bottom: 48px; /* Space for WatcherPanel at bottom */
 }
 
