@@ -821,4 +821,74 @@ impl RobloxClient {
             ))
         }
     }
+
+    /// Launch Roblox with a share code using auth ticket for authentication.
+    /// Uses the roblox-player: protocol with the share link as the launcher URL,
+    /// so the Roblox Player resolves the share code internally while authenticated
+    /// as the specified account.
+    pub fn launch_share_link_with_auth(share_code: &str, auth_ticket: &str) -> AppResult<u32> {
+        let timestamp = chrono::Utc::now().timestamp_millis();
+        let browser_tracker_id = rand::random::<u64>() % 1_000_000_000;
+
+        // The deep link URL that Roblox Player will handle internally
+        let deep_link = format!(
+            "https://www.roblox.com/share?code={}&type=Server",
+            share_code
+        );
+
+        let encoded_url = deep_link
+            .replace(':', "%3A")
+            .replace('/', "%2F")
+            .replace('?', "%3F")
+            .replace('&', "%26")
+            .replace('=', "%3D");
+
+        // Build roblox-player: protocol URI with auth ticket
+        let protocol_uri = format!(
+            "roblox-player:1+launchmode:play+gameinfo:{}+launchtime:{}+placelauncherurl:{}+browsertrackerid:{}+robloxLocale:en_us+gameLocale:en_us+channel:+LaunchExp:InApp",
+            auth_ticket, timestamp, encoded_url, browser_tracker_id
+        );
+
+        log::info!("Launching share code via roblox-player: protocol (code={})", share_code);
+
+        // Check for strap launchers first
+        let strap_launcher_path: Option<PathBuf> = {
+            let local_app_data = std::env::var("LOCALAPPDATA").unwrap_or_default();
+            ["Fishstrap", "Bloxstrap", "Froststrap"].iter().find_map(|name| {
+                let exe = PathBuf::from(&local_app_data)
+                    .join(name)
+                    .join(format!("{}.exe", name));
+                if exe.exists() {
+                    log::info!("Strap launcher detected: {:?}", exe);
+                    Some(exe)
+                } else {
+                    None
+                }
+            })
+        };
+
+        #[cfg(target_os = "windows")]
+        {
+            if let Some(ref strap) = strap_launcher_path {
+                log::info!("Launching share link via strap launcher: {:?}", strap);
+            }
+
+            let child = Command::new("cmd")
+                .args(["/C", "start", "", &protocol_uri])
+                .spawn()
+                .map_err(|e| {
+                    AppError::Other(format!("Failed to launch Roblox via protocol handler: {}", e))
+                })?;
+
+            return Ok(child.id());
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = strap_launcher_path;
+            Err(AppError::Other(
+                "Roblox launching is only supported on Windows".into(),
+            ))
+        }
+    }
 }
