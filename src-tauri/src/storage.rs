@@ -94,6 +94,16 @@ impl AccountStore {
             .ok_or_else(|| AppError::AccountNotFound(id.to_string()))
     }
 
+    /// Find an existing account by user_id
+    pub fn find_by_user_id(&self, user_id: u64) -> Option<&Account> {
+        self.accounts.values().find(|a| a.user_id == Some(user_id))
+    }
+
+    /// Find an existing account by username (case-insensitive)
+    pub fn find_by_username(&self, username: &str) -> Option<&Account> {
+        self.accounts.values().find(|a| a.username.eq_ignore_ascii_case(username))
+    }
+
     /// Add a new account with its cookie
     pub fn add_account(&mut self, mut account: Account, cookie: &str) -> AppResult<()> {
         // Set sort order to end
@@ -113,6 +123,57 @@ impl AccountStore {
         self.save()?;
 
         Ok(())
+    }
+
+    /// Add or update an account — if an account with the same user_id or username
+    /// already exists, update it in-place (preserving its ID, group, alias, sort_order).
+    /// Otherwise add as a new account.
+    pub fn upsert_account(&mut self, account: Account, cookie: &str) -> AppResult<Uuid> {
+        // Try to find existing account by user_id first, then by username
+        let existing_id = account.user_id
+            .and_then(|uid| self.find_by_user_id(uid).map(|a| a.id))
+            .or_else(|| self.find_by_username(&account.username).map(|a| a.id));
+
+        if let Some(id) = existing_id {
+            // Update existing account — preserve group, alias, sort_order, created_at
+            let existing = self.accounts.get(&id).unwrap().clone();
+            let updated = Account {
+                id,
+                username: account.username,
+                user_id: account.user_id,
+                display_name: account.display_name,
+                description: account.description,
+                robux: account.robux,
+                is_premium: account.is_premium,
+                avatar_url: account.avatar_url,
+                // Preserve user-set metadata
+                group: existing.group,
+                alias: existing.alias,
+                sort_order: existing.sort_order,
+                last_used: existing.last_used,
+                created_at: existing.created_at,
+                fields: existing.fields,
+            };
+            self.accounts.insert(id, updated);
+
+            // Update cookie
+            let (encrypted_cookie, nonce) =
+                crypto::encrypt_cookie(&self.encryption_key, cookie)?;
+            let secret = AccountSecret {
+                account_id: id,
+                encrypted_cookie,
+                nonce,
+            };
+            self.secrets.insert(id, secret);
+            self.save()?;
+
+            Ok(id)
+        } else {
+            // Add as new account
+            let id = account.id;
+            self.add_account(account, cookie)?;
+            Ok(id)
+        }
     }
 
     /// Update an existing account (metadata only, not cookie)
