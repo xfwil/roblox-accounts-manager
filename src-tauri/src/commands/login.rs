@@ -172,14 +172,18 @@ async fn do_extract_and_add(
         account.description = details.description;
     }
 
-    let view = account.to_view();
-
     let mut store = state.store.lock().map_err(|e| {
         AppError::Other(format!("Lock poisoned: {}", e))
     })?;
-    store.add_account(account, &cookie_value)?;
 
-    log::info!("Account added via WebView login: {}", view.username);
+    // Use upsert: if same user_id or username already exists, update instead of adding duplicate
+    let final_id = store.upsert_account(account, &cookie_value)?;
+
+    // Get the final account view (may have preserved fields from existing account)
+    let final_account = store.get_account(&final_id)?.clone();
+    let view = final_account.to_view();
+
+    log::info!("Account upserted via WebView login: {}", view.username);
 
     Ok(view)
 }

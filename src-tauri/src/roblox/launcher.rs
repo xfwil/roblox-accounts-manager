@@ -40,7 +40,11 @@ impl RobloxClient {
             .header("Cookie", format!(".ROBLOSECURITY={}", cookie.trim_start_matches(".ROBLOSECURITY=")))
             .header("x-csrf-token", &csrf)
             .header("Content-Type", "application/json")
-            .header("Referer", "https://www.roblox.com")
+            .header("Origin", "https://www.roblox.com")
+            .header("Referer", "https://www.roblox.com/")
+            .header("Sec-Fetch-Dest", "empty")
+            .header("Sec-Fetch-Mode", "cors")
+            .header("Sec-Fetch-Site", "same-site")
             .body("{}")
             .send()
             .await?;
@@ -532,7 +536,11 @@ impl RobloxClient {
             .header("Cookie", cookie_header)
             .header("x-csrf-token", csrf)
             .header("Content-Type", "application/json")
-            .header("Referer", "https://www.roblox.com")
+            .header("Origin", "https://www.roblox.com")
+            .header("Referer", "https://www.roblox.com/")
+            .header("Sec-Fetch-Dest", "empty")
+            .header("Sec-Fetch-Mode", "cors")
+            .header("Sec-Fetch-Site", "same-site")
             .json(&serde_json::json!({
                 "linkId": link_code,
                 "linkType": "Server"

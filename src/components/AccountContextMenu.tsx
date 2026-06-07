@@ -9,6 +9,7 @@ interface AccountContextMenuProps {
   onRefresh: () => void;
   onEditAlias: () => void;
   onSetGroup: () => void;
+  onCopyUsername: () => void;
   onCopyCookie: () => void;
   onJoinGame: () => void;
   onAccountUtils: () => void;
@@ -24,6 +25,7 @@ export function AccountContextMenu({
   onRefresh,
   onEditAlias,
   onSetGroup,
+  onCopyUsername,
   onCopyCookie,
   onRemove,
   onJoinGame,
@@ -79,6 +81,13 @@ export function AccountContextMenu({
           <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
         </svg>
         Set Group
+      </button>
+      <button className="context-menu-item" onClick={() => { onCopyUsername(); onClose(); }}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+          <circle cx="12" cy="7" r="4"></circle>
+        </svg>
+        Copy Username
       </button>
       <button className="context-menu-item" onClick={() => { onCopyCookie(); onClose(); }}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

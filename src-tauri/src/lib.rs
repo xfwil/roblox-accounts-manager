@@ -159,6 +159,9 @@ pub fn run() {
             app.manage(AppState {
                 store,
                 roblox: roblox::RobloxClient::new(),
+                join_throttle: std::sync::Arc::new(tokio::sync::Mutex::new(
+                    state::JoinThrottle::new(),
+                )),
             });
 
             // Set up system tray

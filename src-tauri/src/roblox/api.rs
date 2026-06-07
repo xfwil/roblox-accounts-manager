@@ -1,9 +1,12 @@
-use reqwest::header::{HeaderMap, HeaderValue, COOKIE, USER_AGENT};
+use reqwest::header::{HeaderMap, HeaderValue, COOKIE, USER_AGENT, ACCEPT, ACCEPT_LANGUAGE};
 use serde::Deserialize;
 
 use crate::error::{AppError, AppResult};
 
-const ROBLOX_USER_AGENT: &str = "RobloxAccountManager/2.0";
+/// Mimics a real browser user-agent to avoid CAPTCHA/bot detection.
+/// Using a modern Chrome on Windows UA — update periodically.
+const ROBLOX_USER_AGENT: &str =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 /// Authenticated user info from Roblox
 #[derive(Debug, Deserialize)]
@@ -44,9 +47,26 @@ pub struct RobloxClient {
 
 impl RobloxClient {
     pub fn new() -> Self {
+        let mut default_headers = HeaderMap::new();
+        default_headers.insert(ACCEPT, HeaderValue::from_static("text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"));
+        default_headers.insert(ACCEPT_LANGUAGE, HeaderValue::from_static("en-US,en;q=0.9"));
+        default_headers.insert(
+            reqwest::header::HeaderName::from_static("sec-ch-ua"),
+            HeaderValue::from_static("\"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\""),
+        );
+        default_headers.insert(
+            reqwest::header::HeaderName::from_static("sec-ch-ua-mobile"),
+            HeaderValue::from_static("?0"),
+        );
+        default_headers.insert(
+            reqwest::header::HeaderName::from_static("sec-ch-ua-platform"),
+            HeaderValue::from_static("\"Windows\""),
+        );
+
         Self {
             client: reqwest::Client::builder()
                 .user_agent(ROBLOX_USER_AGENT)
+                .default_headers(default_headers)
                 .cookie_store(false) // Don't share cookies between requests
                 .build()
                 .expect("Failed to build HTTP client"),
@@ -203,7 +223,11 @@ impl RobloxClient {
             .client
             .post("https://auth.roblox.com/v1/account/pin/")
             .headers(Self::auth_headers(cookie))
-            .header("Referer", "https://www.roblox.com")
+            .header("Origin", "https://www.roblox.com")
+            .header("Referer", "https://www.roblox.com/")
+            .header("Sec-Fetch-Dest", "empty")
+            .header("Sec-Fetch-Mode", "cors")
+            .header("Sec-Fetch-Site", "same-site")
             .send()
             .await?;
 
@@ -216,7 +240,11 @@ impl RobloxClient {
             .client
             .post("https://friends.roblox.com/v1/users/1/request-friendship")
             .headers(Self::auth_headers(cookie))
-            .header("Referer", "https://www.roblox.com")
+            .header("Origin", "https://www.roblox.com")
+            .header("Referer", "https://www.roblox.com/")
+            .header("Sec-Fetch-Dest", "empty")
+            .header("Sec-Fetch-Mode", "cors")
+            .header("Sec-Fetch-Site", "same-site")
             .send()
             .await?;
 

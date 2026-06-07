@@ -323,6 +323,12 @@ export function AccountList({
             setGroupDialogAccountId(contextMenu.accountId);
           }}
           onCopyCookie={() => onCopyCookie(contextMenu.accountId!)}
+          onCopyUsername={() => {
+            const account = accounts.find(a => a.id === contextMenu.accountId);
+            if (account) {
+              navigator.clipboard.writeText(account.username);
+            }
+          }}
           onJoinGame={() => onJoinGame(contextMenu.accountId!)}
           onAccountUtils={() => onAccountUtils(contextMenu.accountId!)}
           onOpenProfile={async () => {

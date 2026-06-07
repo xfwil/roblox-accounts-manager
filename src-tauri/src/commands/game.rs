@@ -19,6 +19,19 @@ pub async fn join_game(
     let uuid = Uuid::parse_str(&account_id)
         .map_err(|e| AppError::Other(format!("Invalid UUID: {}", e)))?;
 
+    // Throttle: wait if we joined too recently to avoid CAPTCHA/rate-limit
+    {
+        let mut throttle = state.join_throttle.lock().await;
+        let elapsed = throttle.last_join.elapsed();
+        let min_delay = std::time::Duration::from_millis(throttle.min_delay_ms);
+        if elapsed < min_delay {
+            let wait = min_delay - elapsed;
+            log::info!("[{}] Throttling join: waiting {}ms", account_id, wait.as_millis());
+            tokio::time::sleep(wait).await;
+        }
+        throttle.last_join = std::time::Instant::now();
+    }
+
     let cookie = {
         let store = state.store.lock().map_err(|e| {
             AppError::Other(format!("Lock poisoned: {}", e))
