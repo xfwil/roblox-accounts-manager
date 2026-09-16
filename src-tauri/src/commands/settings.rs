@@ -7,6 +7,7 @@ use crate::error::{AppError, AppResult};
 
 /// Application settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)] // missing fields (older settings.json) fall back to defaults instead of failing to load
 pub struct AppSettings {
     /// Web API server port (0 = disabled)
     pub api_port: u16,
