@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { joinGame } from '../api/game';
+import { trackProcess } from '../api/watcher';
 import './JoinGameDialog.css';
+import { Modal } from './Modal';
 
 interface JoinGameDialogProps {
   isOpen: boolean;
@@ -38,13 +40,15 @@ export function JoinGameDialog({ isOpen, onClose, accountId }: JoinGameDialogPro
     setSuccess(false);
 
     try {
-      await joinGame(
+      const pid = await joinGame(
         accountId,
         parsedPlaceId,
         jobId || undefined,
         followUserId ? parseInt(followUserId, 10) : undefined,
+        undefined,
         launchArgs || undefined
       );
+      trackProcess(pid, accountId, parsedPlaceId).catch(console.error);
       setSuccess(true);
       setTimeout(() => {
         onClose();
@@ -59,17 +63,7 @@ export function JoinGameDialog({ isOpen, onClose, accountId }: JoinGameDialogPro
   };
 
   return (
-    <div className="dialog-overlay" onClick={onClose}>
-      <div className="dialog-content" onClick={e => e.stopPropagation()}>
-        <div className="dialog-header">
-          <h2>Join Game</h2>
-          <button className="btn-icon" onClick={onClose}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <line x1="18" y1="6" x2="6" y2="18"></line>
-              <line x1="6" y1="6" x2="18" y2="18"></line>
-            </svg>
-          </button>
-        </div>
+    <Modal title="Advanced launch" description="Choose an instance, follow a player, or customize launch options." onClose={onClose}>
 
         <form onSubmit={handleJoin} className="dialog-body">
           <div className="form-group">
@@ -167,7 +161,6 @@ export function JoinGameDialog({ isOpen, onClose, accountId }: JoinGameDialogPro
             </button>
           </div>
         </form>
-      </div>
-    </div>
+    </Modal>
   );
 }

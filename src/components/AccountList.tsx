@@ -3,6 +3,8 @@ import type { AccountView } from '../types/account';
 import { AccountRow } from './AccountRow';
 import { AccountContextMenu } from './AccountContextMenu';
 import './AccountList.css';
+import { Modal } from './Modal';
+import { openBrowser } from '../api/login';
 
 type SortField = 'username' | 'alias' | 'group' | 'robux' | 'last_used' | 'created_at' | 'sort_order';
 type SortDirection = 'asc' | 'desc';
@@ -27,6 +29,7 @@ interface AccountListProps {
   onAccountUtils: (accountId: string) => void;
   onCopyCookie: (accountId: string) => void;
   onSelectionChange?: (ids: string[]) => void;
+  onNotice?: (message: string) => void;
 }
 
 export function AccountList({
@@ -43,15 +46,16 @@ export function AccountList({
   onJoinGame,
   onAccountUtils,
   onCopyCookie,
-  onSelectionChange
+  onSelectionChange,
+  onNotice
 }: AccountListProps) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [editingAliasId, setEditingAliasId] = useState<string | null>(null);
+  const [selectionAnchor, setSelectionAnchor] = useState<string | null>(null);
+  const [removeIds, setRemoveIds] = useState<string[]>([]);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
-  // Notify parent of selection changes
-  useEffect(() => {
-    onSelectionChange?.(Array.from(selectedIds));
-  }, [selectedIds, onSelectionChange]);
   
   // Sort state
   const [sortField, setSortField] = useState<SortField>('sort_order');
@@ -101,7 +105,7 @@ export function AccountList({
 
     // Sort
     const sorted = [...filtered].sort((a, b) => {
-      let cmp = 0;
+      let cmp: number;
       switch (sortField) {
         case 'username':
           cmp = a.username.localeCompare(b.username);
@@ -138,6 +142,18 @@ export function AccountList({
     return sorted;
   }, [accounts, searchQuery, selectedGroup, sortField, sortDirection]);
 
+  // Only accounts visible under the current search/group filter count as selected,
+  // so hidden rows are never launched, refreshed or removed by accident.
+  const visibleSelectedIds = useMemo(
+    () => filteredAccounts.filter(account => selectedIds.has(account.id)).map(account => account.id),
+    [filteredAccounts, selectedIds],
+  );
+
+  // Notify parent of selection changes
+  useEffect(() => {
+    onSelectionChange?.(visibleSelectedIds);
+  }, [visibleSelectedIds, onSelectionChange]);
+
   // Sort indicator helper
   const sortIndicator = (field: SortField) => {
     if (sortField !== field) return null;
@@ -151,7 +167,7 @@ export function AccountList({
     
     // Close context menu if open
     if (contextMenu.isOpen) {
-      setContextMenu({ ...contextMenu, isOpen: false });
+      closeContextMenu();
     }
 
     if (e.ctrlKey || e.metaKey) {
@@ -164,14 +180,20 @@ export function AccountList({
       }
       setSelectedIds(newSelected);
     } else if (e.shiftKey && selectedIds.size > 0) {
-      // Range selection (simplified for now - just add to selection)
       const newSelected = new Set(selectedIds);
-      newSelected.add(id);
+      const start = filteredAccounts.findIndex(account => account.id === selectionAnchor);
+      const end = filteredAccounts.findIndex(account => account.id === id);
+      if (start >= 0 && end >= 0) {
+        filteredAccounts.slice(Math.min(start, end), Math.max(start, end) + 1).forEach(account => newSelected.add(account.id));
+      } else {
+        newSelected.add(id);
+      }
       setSelectedIds(newSelected);
     } else {
       // Single selection
       setSelectedIds(new Set([id]));
     }
+    if (!e.shiftKey) setSelectionAnchor(id);
   };
 
   const handleContextMenu = (e: React.MouseEvent, id: string) => {
@@ -191,7 +213,21 @@ export function AccountList({
   };
 
   const closeContextMenu = () => {
-    setContextMenu({ ...contextMenu, isOpen: false });
+    setContextMenu(prev => ({ ...prev, isOpen: false }));
+  };
+
+  const saveGroup = async () => {
+    if (!groupDialogAccountId || busy) return;
+    setBusy(true);
+    setActionError(null);
+    try {
+      await onUpdate(groupDialogAccountId, { group: (groupDialogNewGroup || groupDialogValue).trim() });
+      setGroupDialogAccountId(null);
+    } catch (err) {
+      setActionError(String(err));
+    } finally {
+      setBusy(false);
+    }
   };
 
   // Actions
@@ -256,7 +292,18 @@ export function AccountList({
   }
 
   return (
-    <div className="account-list-container" onClick={() => {
+    <>
+    <div className="selection-toolbar">
+      <span>{filteredAccounts.length} accounts{visibleSelectedIds.length > 0 && ` · ${visibleSelectedIds.length} selected`}</span>
+      {visibleSelectedIds.length > 0 && <div><button className="btn btn-ghost btn-sm" disabled={busy} onClick={async () => {
+        setBusy(true); setActionError(null);
+        try { await Promise.all(visibleSelectedIds.map(id => onRefresh(id))); } catch (err) { setActionError(String(err)); } finally { setBusy(false); }
+      }}>Refresh selected</button><button className="btn btn-ghost btn-sm" onClick={() => setRemoveIds(visibleSelectedIds)}>Remove</button><button className="btn btn-ghost btn-sm" onClick={() => setSelectedIds(new Set())}>Clear</button></div>}
+    </div>
+    {actionError && <p className="workspace-error" role="alert">{actionError}</p>}
+    <div className="account-list-container" onClick={(e) => {
+      // Portaled modals bubble React clicks through here; only react to clicks inside the table area
+      if (!e.currentTarget.contains(e.target as Node)) return;
       // Clear selection when clicking empty space
       if (!contextMenu.isOpen) setSelectedIds(new Set());
       if (contextMenu.isOpen) closeContextMenu();
@@ -264,25 +311,26 @@ export function AccountList({
       <table className="account-table">
         <thead>
           <tr>
-            <th className="col-avatar"></th>
+            <th className="col-avatar"><input type="checkbox" aria-label="Select all visible accounts" checked={filteredAccounts.every(account => selectedIds.has(account.id))} onClick={e => e.stopPropagation()} onChange={event => setSelectedIds(event.target.checked ? new Set(filteredAccounts.map(account => account.id)) : new Set())} /></th>
             <th className="col-user sortable-header" onClick={() => handleSort('username')}>
-              User{sortIndicator('username')}
+              <button type="button" onClick={event => { event.stopPropagation(); handleSort('username'); }}>User{sortIndicator('username')}</button>
             </th>
             <th className="col-alias sortable-header" onClick={() => handleSort('alias')}>
-              Alias{sortIndicator('alias')}
+              <button type="button" onClick={event => { event.stopPropagation(); handleSort('alias'); }}>Alias{sortIndicator('alias')}</button>
             </th>
             <th className="col-group sortable-header" onClick={() => handleSort('group')}>
-              Group{sortIndicator('group')}
+              <button type="button" onClick={event => { event.stopPropagation(); handleSort('group'); }}>Group{sortIndicator('group')}</button>
             </th>
             <th className="col-robux sortable-header" onClick={() => handleSort('robux')}>
-              Robux{sortIndicator('robux')}
+              <button type="button" onClick={event => { event.stopPropagation(); handleSort('robux'); }}>Robux{sortIndicator('robux')}</button>
             </th>
             <th className="col-last-used sortable-header" onClick={() => handleSort('last_used')}>
-              Last Used{sortIndicator('last_used')}
+              <button type="button" onClick={event => { event.stopPropagation(); handleSort('last_used'); }}>Last Used{sortIndicator('last_used')}</button>
             </th>
             <th className="col-date-added sortable-header" onClick={() => handleSort('created_at')}>
-              Date Added{sortIndicator('created_at')}
+              <button type="button" onClick={event => { event.stopPropagation(); handleSort('created_at'); }}>Date Added{sortIndicator('created_at')}</button>
             </th>
+            <th aria-label="Account actions" />
           </tr>
         </thead>
         <tbody>
@@ -293,6 +341,7 @@ export function AccountList({
                 key={account.id}
                 account={account}
                 isSelected={selectedIds.has(account.id)}
+                onToggle={() => setSelectedIds(previous => { const next = new Set(previous); if (next.has(account.id)) next.delete(account.id); else next.add(account.id); return next; })}
                 presenceType={presence?.presenceType}
                 isEditingAlias={editingAliasId === account.id}
                 onClick={(e) => {
@@ -314,7 +363,7 @@ export function AccountList({
           x={contextMenu.x}
           y={contextMenu.y}
           onClose={closeContextMenu}
-          onRefresh={() => onRefresh(contextMenu.accountId!)}
+          onRefresh={() => { onRefresh(contextMenu.accountId!).catch(() => { /* error surfaced by useAccounts */ }); }}
           onEditAlias={() => setEditingAliasId(contextMenu.accountId)}
           onSetGroup={() => {
             const account = accounts.find(a => a.id === contextMenu.accountId);
@@ -326,39 +375,31 @@ export function AccountList({
           onCopyUsername={() => {
             const account = accounts.find(a => a.id === contextMenu.accountId);
             if (account) {
-              navigator.clipboard.writeText(account.username);
+              navigator.clipboard.writeText(account.username)
+                .then(() => onNotice?.(`Copied ${account.username}`))
+                .catch(() => onNotice?.('Unable to copy username.'));
             }
           }}
           onJoinGame={() => onJoinGame(contextMenu.accountId!)}
           onAccountUtils={() => onAccountUtils(contextMenu.accountId!)}
           onOpenProfile={async () => {
             if (contextMenu.accountId) {
-              const { openBrowser } = await import('../api/login');
-              await openBrowser(contextMenu.accountId);
+              try {
+                await openBrowser(contextMenu.accountId);
+              } catch (err) {
+                onNotice?.(`Unable to open browser: ${String(err)}`);
+              }
             }
           }}
-          onRemove={() => {
-            if (window.confirm('Are you sure you want to remove this account?')) {
-              onRemove(contextMenu.accountId!);
-            }
-          }}
+          onRemove={() => setRemoveIds([contextMenu.accountId!])}
         />
       )}
 
       {/* Group Assignment Dialog */}
       {groupDialogAccountId && (
-        <div className="dialog-overlay" onClick={() => setGroupDialogAccountId(null)}>
-          <div className="dialog-content group-dialog" onClick={e => e.stopPropagation()}>
-            <div className="dialog-header">
-              <h3>Set Group</h3>
-              <button className="btn-icon" onClick={() => setGroupDialogAccountId(null)}>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <line x1="18" y1="6" x2="6" y2="18"></line>
-                  <line x1="6" y1="6" x2="18" y2="18"></line>
-                </svg>
-              </button>
-            </div>
+        <Modal title="Organize account" description="Choose a group or create a new one." onClose={() => setGroupDialogAccountId(null)}>
             <div className="dialog-body">
+              {actionError && <p className="alert-error" role="alert">{actionError}</p>}
               {groups.length > 0 && (
                 <div className="form-group">
                   <label>Existing Groups</label>
@@ -395,9 +436,7 @@ export function AccountList({
                   onKeyDown={e => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
-                      const finalGroup = groupDialogNewGroup || groupDialogValue;
-                      onUpdate(groupDialogAccountId, { group: finalGroup || undefined });
-                      setGroupDialogAccountId(null);
+                       void saveGroup();
                     }
                   }}
                   autoFocus
@@ -410,18 +449,21 @@ export function AccountList({
               </button>
               <button
                 className="btn btn-primary"
-                onClick={() => {
-                  const finalGroup = groupDialogNewGroup || groupDialogValue;
-                  onUpdate(groupDialogAccountId, { group: finalGroup || undefined });
-                  setGroupDialogAccountId(null);
-                }}
+                disabled={busy}
+                onClick={saveGroup}
               >
-                Save
+                {busy ? 'Saving...' : 'Save'}
               </button>
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
     </div>
+    {removeIds.length > 0 && <Modal title={`Remove ${removeIds.length === 1 ? 'account' : `${removeIds.length} accounts`}?`} description="This removes accounts from RAM, not from Roblox. You will need to add them again to use them here." onClose={() => { if (!busy) setRemoveIds([]); }}>
+      <div className="dialog-body">{actionError && <p role="alert" className="alert-error">{actionError}</p>}<div className="dialog-footer"><button className="btn btn-secondary" disabled={busy} onClick={() => setRemoveIds([])}>Keep accounts</button><button className="btn btn-danger" disabled={busy} onClick={async () => {
+        setBusy(true); setActionError(null);
+        try { for (const id of removeIds) await onRemove(id); setSelectedIds(new Set()); setRemoveIds([]); } catch (err) { setActionError(String(err)); } finally { setBusy(false); }
+      }}>{busy ? 'Removing...' : 'Remove from RAM'}</button></div></div>
+    </Modal>}
+    </>
   );
 }

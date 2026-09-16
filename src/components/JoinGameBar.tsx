@@ -1,8 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { joinGame, resolveShareLink, resolvePrivateServer } from '../api/game';
+import { trackProcess } from '../api/watcher';
 import { useRecentHistory } from '../hooks/useRecentHistory';
 import { usePresets } from '../hooks/usePresets';
 import './JoinGameBar.css';
+import { Modal } from './Modal';
 
 interface JoinGameBarProps {
   selectedAccountIds: string[];
@@ -13,7 +15,7 @@ interface JoinGameBarProps {
  * - Plain number: 126884695634066
  * - Game URL: https://www.roblox.com/games/126884695634066/...
  */
-function parsePlaceId(input: string): number | null {
+function parsePlaceId(input: string, loose = true): number | null {
   const trimmed = input.trim();
   if (!trimmed) return null;
 
@@ -25,6 +27,8 @@ function parsePlaceId(input: string): number | null {
     if (match) return parseInt(match[1], 10);
   } catch { /* not a URL */ }
 
+  // Loose mode only for the Place ID field; PS/share codes often contain digit runs that are not place IDs
+  if (!loose) return null;
   const numMatch = trimmed.match(/(\d{4,})/);
   if (numMatch) return parseInt(numMatch[1], 10);
 
@@ -176,16 +180,26 @@ export function JoinGameBar({ selectedAccountIds }: JoinGameBarProps) {
   const [editingPresetId, setEditingPresetId] = useState<string | null>(null);
   const presetRef = useRef<HTMLDivElement>(null);
   const presetBtnRef = useRef<HTMLButtonElement>(null);
+  const statusTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(statusTimer.current), []);
+  // Any new status cancels a pending auto-clear, so an old timeout can't wipe a newer message
+  const updateStatus = (next: typeof status) => {
+    window.clearTimeout(statusTimer.current);
+    setStatus(next);
+  };
+  const flashStatus = (next: NonNullable<typeof status>, ms: number) => {
+    updateStatus(next);
+    statusTimer.current = window.setTimeout(() => setStatus(null), ms);
+  };
 
   const handleJoin = async () => {
     if (selectedAccountIds.length === 0) {
-      setStatus({ type: 'error', message: 'Select account(s) first' });
-      setTimeout(() => setStatus(null), 3000);
+      flashStatus({ type: 'error', message: 'Select account(s) first' }, 3000);
       return;
     }
 
     setLoading(true);
-    setStatus(null);
+    updateStatus(null);
 
     try {
       let placeId = parsePlaceId(placeIdInput);
@@ -194,30 +208,28 @@ export function JoinGameBar({ selectedAccountIds }: JoinGameBarProps) {
       // If Place ID field is empty, try to get it from PS link
       if (!placeId && psLinkInput.trim()) {
         // Old format PS links contain Place ID in the URL path
-        placeId = parsePlaceId(psLinkInput);
+        placeId = parsePlaceId(psLinkInput, false);
       }
 
       // If still no Place ID and we have a share link, resolve it via backend
       if (!placeId && psLinkInput.trim()) {
         try {
-          setStatus({ type: 'info', message: 'Resolving share link...' });
+          updateStatus({ type: 'info', message: 'Resolving share link...' });
           const [resolvedPlaceId, resolvedCode] = await resolveShareLink(psLinkInput.trim());
           placeId = resolvedPlaceId;
           if (!linkCode) linkCode = resolvedCode;
-          setStatus(null);
+          updateStatus(null);
         } catch (err) {
           console.error('Failed to resolve share link:', err);
-          setStatus({ type: 'error', message: 'Failed to resolve PS link. Enter Place ID manually.' });
           setLoading(false);
-          setTimeout(() => setStatus(null), 4000);
+          flashStatus({ type: 'error', message: 'Failed to resolve PS link. Enter Place ID manually.' }, 4000);
           return;
         }
       }
 
       if (!placeId) {
-        setStatus({ type: 'error', message: 'Enter a Place ID or a game URL' });
         setLoading(false);
-        setTimeout(() => setStatus(null), 3000);
+        flashStatus({ type: 'error', message: 'Enter a Place ID or a game URL' }, 3000);
         return;
       }
 
@@ -233,7 +245,7 @@ export function JoinGameBar({ selectedAccountIds }: JoinGameBarProps) {
       // The result is cached server-side so subsequent joins reuse it.
       // If pre-resolve fails, we still proceed — join_game will try with just linkCode.
       if (linkCode) {
-        setStatus({ type: 'info', message: 'Resolving private server...' });
+        updateStatus({ type: 'info', message: 'Resolving private server...' });
         for (const aid of selectedAccountIds) {
           try {
             await resolvePrivateServer(aid, placeId, linkCode);
@@ -255,8 +267,8 @@ export function JoinGameBar({ selectedAccountIds }: JoinGameBarProps) {
           if (i > 0) {
             await new Promise(r => setTimeout(r, 1500));
           }
-          setStatus({ type: 'info', message: `Launching ${i + 1}/${selectedAccountIds.length}...` });
-          await joinGame(
+          updateStatus({ type: 'info', message: `Launching ${i + 1}/${selectedAccountIds.length}...` });
+          const pid = await joinGame(
             accountId,
             placeId,
             undefined, // jobId
@@ -264,6 +276,7 @@ export function JoinGameBar({ selectedAccountIds }: JoinGameBarProps) {
             linkCode || undefined,
             undefined, // launchArgs
           );
+          trackProcess(pid, accountId, placeId).catch(console.error);
           successCount++;
         } catch (err) {
           console.error(`Failed to join game for ${accountId}:`, err);
@@ -273,17 +286,16 @@ export function JoinGameBar({ selectedAccountIds }: JoinGameBarProps) {
       }
 
       if (failCount === 0) {
-        setStatus({ type: 'success', message: `Launched ${successCount} instance${successCount > 1 ? 's' : ''}` });
+        updateStatus({ type: 'success', message: `Launched ${successCount} instance${successCount > 1 ? 's' : ''}` });
       } else if (successCount === 0) {
-        setStatus({ type: 'error', message: lastError || 'All failed' });
+        updateStatus({ type: 'error', message: lastError || 'All failed' });
       } else {
-        setStatus({ type: 'error', message: `${successCount} ok, ${failCount} failed: ${lastError}` });
+        updateStatus({ type: 'error', message: `${successCount} ok, ${failCount} failed: ${lastError}` });
       }
-      setTimeout(() => setStatus(null), 8000);
+      statusTimer.current = window.setTimeout(() => setStatus(null), 8000);
     } catch (err) {
       console.error('Join error:', err);
-      setStatus({ type: 'error', message: typeof err === 'string' ? err : 'Join failed' });
-      setTimeout(() => setStatus(null), 4000);
+      flashStatus({ type: 'error', message: typeof err === 'string' ? err : 'Join failed' }, 4000);
     } finally {
       setLoading(false);
     }
@@ -303,9 +315,9 @@ export function JoinGameBar({ selectedAccountIds }: JoinGameBarProps) {
     }
   };
 
-  // Close preset dropdown on outside click
+  // Close preset dropdown on outside click (only the dropdown; save/edit modals are portaled and handle their own dismissal)
   useEffect(() => {
-    if (!presetView) return;
+    if (presetView !== 'list') return;
     const handleClick = (e: MouseEvent) => {
       if (
         presetRef.current && !presetRef.current.contains(e.target as Node) &&
@@ -537,17 +549,7 @@ export function JoinGameBar({ selectedAccountIds }: JoinGameBarProps) {
         <span className={`join-status ${status.type}`}>{status.message}</span>
       )}
       {presetView === 'save' && (
-        <div className="dialog-overlay" onMouseDown={() => setPresetView(null)}>
-          <div className="dialog preset-save-dialog" onMouseDown={(e) => e.stopPropagation()}>
-            <div className="dialog-header">
-              <h2>Save Preset</h2>
-              <button className="dialog-close" onClick={() => setPresetView(null)}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <line x1="18" y1="6" x2="6" y2="18"></line>
-                  <line x1="6" y1="6" x2="18" y2="18"></line>
-                </svg>
-              </button>
-            </div>
+        <Modal title="Save preset" description="Keep this destination ready for your next session." onClose={() => setPresetView(null)}>
             <div className="dialog-body">
               <div className="form-group">
                 <label className="form-label">Preset Name</label>
@@ -581,21 +583,10 @@ export function JoinGameBar({ selectedAccountIds }: JoinGameBarProps) {
                 disabled={!presetName.trim()}
               >Save Preset</button>
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
       {presetView === 'edit' && (
-        <div className="dialog-overlay" onMouseDown={() => setPresetView(null)}>
-          <div className="dialog preset-save-dialog" onMouseDown={(e) => e.stopPropagation()}>
-            <div className="dialog-header">
-              <h2>Edit Preset</h2>
-              <button className="dialog-close" onClick={() => setPresetView(null)}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <line x1="18" y1="6" x2="6" y2="18"></line>
-                  <line x1="6" y1="6" x2="18" y2="18"></line>
-                </svg>
-              </button>
-            </div>
+        <Modal title="Edit preset" description="Update your saved destination." onClose={() => setPresetView(null)}>
             <div className="dialog-body">
               <div className="form-group">
                 <label className="form-label">Preset Name</label>
@@ -649,8 +640,7 @@ export function JoinGameBar({ selectedAccountIds }: JoinGameBarProps) {
                 disabled={!presetName.trim()}
               >Update</button>
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
     </div>
   );

@@ -45,9 +45,14 @@ export function WatcherPanel({ accounts }: WatcherPanelProps) {
 
   // Poll for status
   useEffect(() => {
-    fetchStatus();
+    let active = true;
+    getProcessStatus().then(stats => {
+      if (!active) return;
+      setProcesses(stats);
+      setIsRunningCount(stats.filter(process => process.is_running).length);
+    }).catch(err => console.error('Failed to fetch watcher status:', err));
     const interval = setInterval(fetchStatus, 10000); // 10 seconds
-    return () => clearInterval(interval);
+    return () => { active = false; clearInterval(interval); };
   }, []);
 
   const handleScan = async (e: React.MouseEvent) => {
@@ -90,7 +95,7 @@ export function WatcherPanel({ accounts }: WatcherPanelProps) {
   return (
     <div className={`watcher-panel-container ${isExpanded ? 'expanded' : 'collapsed'}`}>
       <div className="watcher-header" onClick={() => setIsExpanded(!isExpanded)}>
-        <div className="watcher-title">
+        <button className="watcher-title" aria-expanded={isExpanded} onClick={event => { event.stopPropagation(); setIsExpanded(!isExpanded); }}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent-primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
           </svg>
@@ -98,7 +103,7 @@ export function WatcherPanel({ accounts }: WatcherPanelProps) {
           <span className={`watcher-badge ${isRunningCount > 0 ? 'active' : ''}`}>
             {isRunningCount} Running
           </span>
-        </div>
+        </button>
         
         <div className="watcher-controls">
           <div className="watcher-actions">
@@ -134,7 +139,7 @@ export function WatcherPanel({ accounts }: WatcherPanelProps) {
         </div>
       </div>
 
-      <div className="watcher-content">
+      {isExpanded && <div className="watcher-content">
         <div className="watcher-toolbar">
           <h3>Tracked Processes</h3>
           {error && <span className="watcher-error">{error}</span>}
@@ -195,7 +200,7 @@ export function WatcherPanel({ accounts }: WatcherPanelProps) {
             </div>
           )}
         </div>
-      </div>
+      </div>}
     </div>
   );
 }

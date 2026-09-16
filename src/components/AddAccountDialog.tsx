@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import './AddAccountDialog.css';
+import { Modal } from './Modal';
 
 interface AddAccountDialogProps {
   isOpen: boolean;
@@ -14,17 +15,6 @@ export function AddAccountDialog({ isOpen, onClose, onAdd, groups }: AddAccountD
   const [group, setGroup] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // Reset state when opened
-  useEffect(() => {
-    if (isOpen) {
-      setCookie('');
-      setAlias('');
-      setGroup('');
-      setError(null);
-      setLoading(false);
-    }
-  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -49,17 +39,7 @@ export function AddAccountDialog({ isOpen, onClose, onAdd, groups }: AddAccountD
   };
 
   return (
-    <div className="dialog-overlay" onClick={onClose}>
-      <div className="dialog" onClick={(e) => e.stopPropagation()}>
-        <div className="dialog-header">
-          <h2>Add Account</h2>
-          <button className="btn-icon" onClick={onClose} aria-label="Close">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="18" y1="6" x2="6" y2="18"></line>
-              <line x1="6" y1="6" x2="18" y2="18"></line>
-            </svg>
-          </button>
-        </div>
+    <Modal title="Add an account" description="Connect a Roblox account to your local workspace." onClose={onClose}>
 
         <form onSubmit={handleSubmit} className="dialog-body">
           {error && <div className="dialog-error">{error}</div>}
@@ -134,7 +114,6 @@ export function AddAccountDialog({ isOpen, onClose, onAdd, groups }: AddAccountD
             </button>
           </div>
         </form>
-      </div>
-    </div>
+    </Modal>
   );
 }

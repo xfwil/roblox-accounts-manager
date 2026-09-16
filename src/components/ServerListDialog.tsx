@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { getServers, getGameDetails, joinGame } from '../api/game';
+import { trackProcess } from '../api/watcher';
 import type { GameServer, GameDetails } from '../types/game';
 import './ServerListDialog.css';
+import { Modal } from './Modal';
 
 interface ServerListDialogProps {
   isOpen: boolean;
@@ -20,6 +22,8 @@ export function ServerListDialog({ isOpen, onClose, accountId }: ServerListDialo
   const [gameDetails, setGameDetails] = useState<GameDetails | null>(null);
   const [servers, setServers] = useState<GameServer[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
+  // Place the current list belongs to; the input may be edited after loading
+  const [loadedPlaceId, setLoadedPlaceId] = useState<number | null>(null);
 
   if (!isOpen) return null;
 
@@ -43,18 +47,20 @@ export function ServerListDialog({ isOpen, onClose, accountId }: ServerListDialo
     setServers([]);
     setNextCursor(null);
     setGameDetails(null);
+    setLoadedPlaceId(null);
 
     try {
       // Load details and servers in parallel
       const [detailsResult, serversResult] = await Promise.all([
         getGameDetails(parsedPlaceId).catch(() => null),
-        getServers(parsedPlaceId, undefined, 20)
+        getServers(parsedPlaceId, undefined, 25)
       ]);
 
       if (detailsResult && detailsResult.length > 0) {
         setGameDetails(detailsResult[0]);
       }
       
+      setLoadedPlaceId(parsedPlaceId);
       setServers(serversResult[0]);
       setNextCursor(serversResult[1]);
     } catch (err: unknown) {
@@ -66,12 +72,11 @@ export function ServerListDialog({ isOpen, onClose, accountId }: ServerListDialo
   };
 
   const loadMore = async () => {
-    if (!nextCursor || !placeId) return;
+    if (!nextCursor || !loadedPlaceId) return;
 
     setLoadingMore(true);
     try {
-      const parsedPlaceId = parseInt(placeId, 10);
-      const [newServers, newCursor] = await getServers(parsedPlaceId, nextCursor, 20);
+      const [newServers, newCursor] = await getServers(loadedPlaceId, nextCursor, 25);
       
       setServers(prev => [...prev, ...newServers]);
       setNextCursor(newCursor);
@@ -89,13 +94,13 @@ export function ServerListDialog({ isOpen, onClose, accountId }: ServerListDialo
       return;
     }
 
-    const parsedPlaceId = parseInt(placeId, 10);
-    
+    if (!loadedPlaceId) return;
     setJoiningServerId(jobId);
     setJoinError(null);
     
     try {
-      await joinGame(accountId, parsedPlaceId, jobId);
+      const pid = await joinGame(accountId, loadedPlaceId, jobId);
+      trackProcess(pid, accountId, loadedPlaceId).catch(console.error);
       // Wait a moment before clearing status so user sees it succeeded
       setTimeout(() => {
         setJoiningServerId(null);
@@ -108,17 +113,7 @@ export function ServerListDialog({ isOpen, onClose, accountId }: ServerListDialo
   };
 
   return (
-    <div className="dialog-overlay" onClick={onClose}>
-      <div className="dialog-content server-dialog" onClick={e => e.stopPropagation()}>
-        <div className="dialog-header">
-          <h2>Server Browser</h2>
-          <button className="btn-icon" onClick={onClose}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <line x1="18" y1="6" x2="6" y2="18"></line>
-              <line x1="6" y1="6" x2="18" y2="18"></line>
-            </svg>
-          </button>
-        </div>
+    <Modal title="Server browser" description="Find an open spot. Choose the right instance for your session." onClose={onClose} className="server-dialog">
 
         <div className="dialog-body server-dialog-body">
           <form onSubmit={loadInitial} className="server-search-form">
@@ -255,7 +250,6 @@ export function ServerListDialog({ isOpen, onClose, accountId }: ServerListDialo
             )}
           </div>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

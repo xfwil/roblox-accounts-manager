@@ -1,10 +1,12 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import type { AccountView } from '../types/account';
 import './AccountRow.css';
+import { Icon } from './Icon';
 
 interface AccountRowProps {
   account: AccountView;
   isSelected: boolean;
+  onToggle: () => void;
   presenceType?: number;
   onClick: (e: React.MouseEvent) => void;
   onContextMenu: (e: React.MouseEvent, accountId: string) => void;
@@ -57,6 +59,7 @@ function getDaysSinceUsed(dateString: string | null): number {
 export function AccountRow({ 
   account, 
   isSelected, 
+  onToggle,
   presenceType,
   onClick, 
   onContextMenu,
@@ -65,6 +68,7 @@ export function AccountRow({
   onStopEditingAlias
 }: AccountRowProps) {
   const [tempAlias, setTempAlias] = useState(account.alias || '');
+  const aliasFinished = useRef(false);
   
   const daysSinceUsed = getDaysSinceUsed(account.last_used);
   const isStale = daysSinceUsed >= 20;
@@ -72,15 +76,19 @@ export function AccountRow({
   const handleAliasKeyDown = async (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault();
+      aliasFinished.current = true;
       await onAliasUpdate(account.id, tempAlias);
       onStopEditingAlias();
     } else if (e.key === 'Escape') {
+      aliasFinished.current = true;
       setTempAlias(account.alias || '');
       onStopEditingAlias();
     }
   };
 
   const handleAliasBlur = async () => {
+    if (aliasFinished.current) return;
+    aliasFinished.current = true;
     if (tempAlias !== account.alias) {
       await onAliasUpdate(account.id, tempAlias);
     }
@@ -114,6 +122,10 @@ export function AccountRow({
       onContextMenu={(e) => onContextMenu(e, account.id)}
     >
       <td className="col-avatar">
+        <input type="checkbox" aria-label={`Select ${account.username}`} checked={isSelected} onClick={e => e.stopPropagation()} onChange={onToggle} />
+      </td>
+      <td className="col-user">
+        <div className="row-identity">
         <div className="avatar-wrapper">
           <img 
             src={account.avatar_url || 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjYTFhMWFhIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PHBhdGggZD0iTTIwIDIxdi0yYTRgNCAwIDAgMC00LTRINGE0IDQgMCAwIDAtNCAydjIiPjwvcGF0aD48Y2lyY2xlIGN4PSIxMiIgY3k9IjciIHI9IjQiPjwvY2lyY2xlPjwvc3ZnPg=='} 
@@ -128,16 +140,18 @@ export function AccountRow({
             title={getPresenceTitle(presenceType)}
           />
         </div>
-      </td>
-      <td className="col-user">
-        <div className="user-primary">{account.username}</div>
-        <div className="user-secondary">{account.display_name}</div>
+        <div><div className="user-primary">{account.username}</div>
+        <div className="user-secondary">{account.display_name || getPresenceTitle(presenceType)}</div></div>
+        </div>
       </td>
       <td className="col-alias">
         {isEditingAlias ? (
           <input
             type="text"
             className="alias-edit-input"
+            aria-label={`Alias for ${account.username}`}
+            onFocus={() => { aliasFinished.current = false; setTempAlias(account.alias || ''); }}
+            onClick={event => event.stopPropagation()}
             value={tempAlias}
             onChange={(e) => setTempAlias(e.target.value)}
             onKeyDown={handleAliasKeyDown}
@@ -182,6 +196,7 @@ export function AccountRow({
       <td className="col-date-added">
         <span className="text-secondary">{formatDate(account.created_at)}</span>
       </td>
+      <td className="row-actions"><button className="btn-icon" aria-label={`Actions for ${account.username}`} onClick={e => { e.stopPropagation(); onContextMenu(e, account.id); }}><Icon name="more" /></button></td>
     </tr>
   );
 }
