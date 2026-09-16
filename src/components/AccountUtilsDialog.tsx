@@ -9,6 +9,7 @@ import {
   getPrivacySettings 
 } from '../api/utilities';
 import './AccountUtilsDialog.css';
+import { Modal } from './Modal';
 
 interface AccountUtilsDialogProps {
   isOpen: boolean;
@@ -32,30 +33,21 @@ export function AccountUtilsDialog({ isOpen, onClose, account }: AccountUtilsDia
   const [emailPassword, setEmailPassword] = useState('');
   const [newEmail, setNewEmail] = useState('');
   
-  const [newDisplayName, setNewDisplayName] = useState('');
+  const [newDisplayName, setNewDisplayName] = useState(account?.display_name || '');
   
-  const [description, setDescription] = useState('');
+  const [description, setDescription] = useState(account?.description || '');
   
   const [privacySettings, setPrivacySettings] = useState<PrivacySettings | null>(null);
-  const [loadingPrivacy, setLoadingPrivacy] = useState(false);
+  const [loadingPrivacy, setLoadingPrivacy] = useState(true); // only read on the Privacy tab, which always starts a fetch
 
-  // Reset state when opening/changing account
   useEffect(() => {
-    if (isOpen && account) {
-      setOldPassword('');
-      setNewPassword('');
-      setConfirmPassword('');
-      setEmailPassword('');
-      setNewEmail('');
-      setNewDisplayName(account.display_name || '');
-      setDescription(account.description || '');
-      setError(null);
-      setSuccess(null);
-      
-      if (activeTab === 'privacy') {
-        loadPrivacySettings();
-      }
-    }
+    if (!isOpen || !account || activeTab !== 'privacy') return;
+    let active = true;
+    getPrivacySettings(account.id).then(settings => {
+      if (active) setPrivacySettings(settings);
+    }).catch(err => { if (active) setError(String(err)); })
+      .finally(() => { if (active) setLoadingPrivacy(false); });
+    return () => { active = false; };
   }, [isOpen, account, activeTab]);
 
   if (!isOpen || !account) return null;
@@ -77,19 +69,6 @@ export function AccountUtilsDialog({ isOpen, onClose, account }: AccountUtilsDia
       setError(typeof err === 'string' ? err : err instanceof Error ? err.message : 'Operation failed');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const loadPrivacySettings = async () => {
-    if (!account) return;
-    setLoadingPrivacy(true);
-    try {
-      const settings = await getPrivacySettings(account.id);
-      setPrivacySettings(settings);
-    } catch (err: unknown) {
-      setError(typeof err === 'string' ? err : err instanceof Error ? err.message : 'Failed to load privacy settings');
-    } finally {
-      setLoadingPrivacy(false);
     }
   };
 
@@ -130,17 +109,7 @@ export function AccountUtilsDialog({ isOpen, onClose, account }: AccountUtilsDia
   };
 
   return (
-    <div className="dialog-overlay" onClick={onClose}>
-      <div className="dialog-content utils-dialog" onClick={e => e.stopPropagation()}>
-        <div className="dialog-header">
-          <h2>Account Utilities: {account.username}</h2>
-          <button className="btn-icon" onClick={onClose}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <line x1="18" y1="6" x2="6" y2="18"></line>
-              <line x1="6" y1="6" x2="18" y2="18"></line>
-            </svg>
-          </button>
-        </div>
+    <Modal title="Manage account" description={account.username} onClose={onClose} className="utils-dialog">
 
         <div className="utils-layout">
           <div className="utils-tabs">
@@ -313,7 +282,6 @@ export function AccountUtilsDialog({ isOpen, onClose, account }: AccountUtilsDia
             )}
           </div>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

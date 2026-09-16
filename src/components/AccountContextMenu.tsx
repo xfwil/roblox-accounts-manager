@@ -42,11 +42,17 @@ export function AccountContextMenu({
       }
     };
 
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+
     if (isOpen) {
       document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener('keydown', handleKey);
     }
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKey);
     };
   }, [isOpen, onClose]);
 
@@ -55,12 +61,12 @@ export function AccountContextMenu({
   // Keep menu in viewport bounds
   // Adjust height estimate for new items (9 items + separators ≈ 350px)
   const style: React.CSSProperties = {
-    top: Math.min(y, window.innerHeight - 350),
-    left: Math.min(x, window.innerWidth - 200),
+    top: Math.max(8, Math.min(y, window.innerHeight - 370)),
+    left: Math.max(8, Math.min(x, window.innerWidth - 220)),
   };
 
   return (
-    <div className="context-menu" style={style} ref={menuRef}>
+    <div className="context-menu" style={style} ref={menuRef} onClick={event => event.stopPropagation()}>
       <button className="context-menu-item" onClick={() => { onRefresh(); onClose(); }}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <polyline points="23 4 23 10 17 10"></polyline>

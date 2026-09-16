@@ -4,6 +4,7 @@ import { importCookies, importUserPassCookie, exportAccounts } from '../api/impo
 import { importLegacyAccounts } from '../api/importLegacy';
 import type { ImportResult, LegacyImportResult } from '../types/index';
 import './ImportExportDialog.css';
+import { Modal } from './Modal';
 
 interface ImportExportDialogProps {
   isOpen: boolean;
@@ -40,10 +41,8 @@ export function ImportExportDialog({ isOpen, onClose, onImportComplete }: Import
   const [progressCurrent, setProgressCurrent] = useState(0);
   const [progressTotal, setProgressTotal] = useState(0);
 
-  // Listen for import-progress events (cookie import)
+  // Listen for progress events for the dialog's lifetime (subscribing only once loading flips would miss early events)
   useEffect(() => {
-    if (!loading) return;
-
     const unlisten = listen<{ current: number; total: number; result: ImportResult }>(
       'import-progress',
       (event) => {
@@ -54,12 +53,10 @@ export function ImportExportDialog({ isOpen, onClose, onImportComplete }: Import
     );
 
     return () => { unlisten.then(fn => fn()); };
-  }, [loading, activeTab]);
+  }, []);
 
   // Listen for legacy-import-progress events
   useEffect(() => {
-    if (!loading) return;
-
     const unlisten = listen<{ current: number; total: number; result: LegacyImportResult }>(
       'legacy-import-progress',
       (event) => {
@@ -70,7 +67,7 @@ export function ImportExportDialog({ isOpen, onClose, onImportComplete }: Import
     );
 
     return () => { unlisten.then(fn => fn()); };
-  }, [loading, activeTab]);
+  }, []);
 
   if (!isOpen) return null;
 
@@ -183,8 +180,7 @@ export function ImportExportDialog({ isOpen, onClose, onImportComplete }: Import
   };
 
   return (
-    <div className="dialog-overlay" onClick={onClose}>
-      <div className="dialog-content import-export-dialog" onClick={e => e.stopPropagation()}>
+    <Modal title="Import & export" description="Bring your accounts together, or take a backup with you." onClose={onClose} className="import-export-dialog">
         <div className="dialog-header">
           <div className="ie-tabs">
             <button 
@@ -206,12 +202,6 @@ export function ImportExportDialog({ isOpen, onClose, onImportComplete }: Import
               Legacy Import
             </button>
           </div>
-          <button className="btn-icon" onClick={onClose}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <line x1="18" y1="6" x2="6" y2="18"></line>
-              <line x1="6" y1="6" x2="18" y2="18"></line>
-            </svg>
-          </button>
         </div>
 
         <div className="dialog-body ie-body">
@@ -531,7 +521,6 @@ export function ImportExportDialog({ isOpen, onClose, onImportComplete }: Import
             </form>
           )}
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

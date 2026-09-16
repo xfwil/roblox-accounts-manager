@@ -21,8 +21,12 @@ export function useAccounts() {
   }, []);
 
   useEffect(() => {
-    fetchAccounts();
-  }, [fetchAccounts]);
+    let active = true;
+    api.listAccounts().then(data => { if (active) setAccounts(data); })
+      .catch(err => { if (active) setError(String(err)); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, []);
 
   const addAccount = async (cookie: string, group?: string, alias?: string) => {
     try {
@@ -68,16 +72,14 @@ export function useAccounts() {
       // Since there's no refresh_all in API, we'll refresh one by one or just list.
       // Assuming listAccounts does not fetch fresh data from roblox, we might need to map over all accounts.
       // For now, let's just do individual refreshes. In a real app we might want a dedicated rust command.
-      const promises = accounts.map(a => api.refreshAccount(a.id));
-      const updatedAccounts = await Promise.allSettled(promises);
-      
-      const newAccounts = [...accounts];
-      updatedAccounts.forEach((result, index) => {
-        if (result.status === 'fulfilled') {
-          newAccounts[index] = result.value;
-        }
+      const results = await Promise.allSettled(accounts.map(a => api.refreshAccount(a.id)));
+      const updated = new Map<string, AccountView>();
+      results.forEach(result => {
+        if (result.status === 'fulfilled') updated.set(result.value.id, result.value);
       });
-      setAccounts(newAccounts);
+      setAccounts(prev => prev.map(a => updated.get(a.id) ?? a));
+      const failed = results.filter(result => result.status === 'rejected').length;
+      if (failed > 0) setError(`${failed} of ${results.length} accounts failed to refresh`);
       
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

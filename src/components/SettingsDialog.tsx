@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { getSettings, saveSettings, getThemes } from '../api/settings';
 import type { AppSettings } from '../types/game';
 import './SettingsDialog.css';
+import { Modal } from './Modal';
 
 interface SettingsDialogProps {
   isOpen: boolean;
@@ -17,32 +18,16 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
   const [success, setSuccess] = useState<string | null>(null);
 
   useEffect(() => {
-    if (isOpen) {
-      loadData();
-    } else {
-      // Reset state when closed
-      setError(null);
-      setSuccess(null);
-    }
-  }, [isOpen]);
-
-  const loadData = async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const [settingsData, themesData] = await Promise.all([
-        getSettings(),
-        getThemes()
-      ]);
+    let active = true;
+    Promise.all([getSettings(), getThemes()]).then(([settingsData, themesData]) => {
+      if (!active) return;
       setSettings(settingsData);
       setThemes(themesData);
-    } catch (err: unknown) {
-      console.error('Failed to load settings:', err);
-      setError('Failed to load settings. Make sure the backend is running.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
+    }).catch(() => {
+      if (active) setError('Failed to load settings. Make sure the backend is running.');
+    }).finally(() => { if (active) setIsLoading(false); });
+    return () => { active = false; };
+  }, []);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -54,6 +39,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
 
     try {
       await saveSettings(settings);
+      document.documentElement.dataset.theme = settings.theme;
       setSuccess('Settings saved successfully');
       setTimeout(() => {
         onClose();
@@ -88,19 +74,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
   if (!isOpen) return null;
 
   return (
-    <div className="dialog-overlay" onClick={(e) => {
-      if (e.target === e.currentTarget) onClose();
-    }}>
-      <div className="dialog">
-        <div className="dialog-header">
-          <h2>Settings</h2>
-          <button className="dialog-close" onClick={onClose} title="Close">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="18" y1="6" x2="6" y2="18"></line>
-              <line x1="6" y1="6" x2="18" y2="18"></line>
-            </svg>
-          </button>
-        </div>
+    <Modal title="Workspace settings" description="Make RAM work the way you do." onClose={onClose} className="settings-modal">
 
         <div className="dialog-body">
           {isLoading ? (
@@ -211,7 +185,6 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
             {isSaving ? 'Saving...' : 'Save Settings'}
           </button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

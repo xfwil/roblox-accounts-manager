@@ -35,12 +35,16 @@ export function usePresence(userIds: number[], enabled: boolean = true) {
     if (!enabled || userIds.length === 0) return;
 
     // Initial fetch
-    fetchPresences();
+    let active = true;
+    getAccountPresences().then(presences => {
+      if (active) setPresenceMap(new Map(presences.map(presence => [presence.userId, presence])));
+    }).catch(err => console.error('Failed to fetch presences:', err));
 
     // Poll every 2 minutes
     intervalRef.current = setInterval(fetchPresences, POLL_INTERVAL_MS);
 
     return () => {
+      active = false;
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
         intervalRef.current = null;
