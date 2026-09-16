@@ -551,7 +551,7 @@ impl RobloxClient {
 
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
-        log::info!("Sharelinks API: status={}, body={}", status, &body[..body.len().min(500)]);
+        log::info!("Sharelinks API: status={}, body={}", status, &body[..body.floor_char_boundary(500)]);
 
         // Classify HTTP status for retry logic
         if status.as_u16() == 429 {
@@ -565,14 +565,14 @@ impl RobloxClient {
             return Err(("CSRF token rejected (403)".into(), true));
         }
         if status.as_u16() == 400 || status.as_u16() == 404 {
-            return Err((format!("Invalid link code ({}): {}", status, &body[..body.len().min(200)]), false));
+            return Err((format!("Invalid link code ({}): {}", status, &body[..body.floor_char_boundary(200)]), false));
         }
         if !status.is_success() {
-            return Err((format!("Unexpected status {}: {}", status, &body[..body.len().min(200)]), true));
+            return Err((format!("Unexpected status {}: {}", status, &body[..body.floor_char_boundary(200)]), true));
         }
 
         let json: serde_json::Value = serde_json::from_str(&body)
-            .map_err(|_| (format!("Invalid JSON response: {}", &body[..body.len().min(200)]), false))?;
+            .map_err(|_| (format!("Invalid JSON response: {}", &body[..body.floor_char_boundary(200)]), false))?;
 
         // Try multiple response shapes — Roblox may change the structure
         let invite_data = json.get("privateServerInviteData")
@@ -591,7 +591,7 @@ impl RobloxClient {
                         return Ok((lc.to_string(), None));
                     }
                 }
-                return Err((format!("No invite data in response: {}", &body[..body.len().min(300)]), false));
+                return Err((format!("No invite data in response: {}", &body[..body.floor_char_boundary(300)]), false));
             }
         };
 
