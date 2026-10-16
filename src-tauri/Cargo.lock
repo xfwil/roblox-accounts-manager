@@ -3426,14 +3426,16 @@ checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
 
 [[package]]
 name = "ram-manager"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
  "axum",
+ "base64 0.22.1",
  "chrono",
  "futures-util",
  "log",
+ "png",
  "rand 0.8.6",
  "regex-lite",
  "reqwest 0.12.28",
@@ -3452,6 +3454,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "uuid",
+ "windows 0.61.3",
  "windows-sys 0.59.0",
 ]
 

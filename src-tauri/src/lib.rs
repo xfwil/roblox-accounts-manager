@@ -1,3 +1,5 @@
+#[cfg(windows)]
+mod capture;
 mod commands;
 mod crypto;
 mod error;
@@ -227,6 +229,8 @@ pub fn run() {
             // Login & Browser
             commands::open_login_window,
             commands::open_browser,
+            commands::start_bulk_login,
+            commands::cancel_bulk_login,
             // Presence
             commands::get_account_presences,
             commands::get_single_presence,

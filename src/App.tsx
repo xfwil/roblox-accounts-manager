@@ -11,6 +11,7 @@ import { ServerListDialog } from './components/ServerListDialog';
 import { AccountUtilsDialog } from './components/AccountUtilsDialog';
 import { ImportExportDialog } from './components/ImportExportDialog';
 import { SettingsDialog } from './components/SettingsDialog';
+import { BulkLoginDialog } from './components/BulkLoginDialog';
 import { WatcherPanel } from './components/WatcherPanel';
 import * as api from './api/accounts';
 import { getAccountCookie } from './api/importExport';
@@ -39,6 +40,7 @@ function App() {
   const [isServerListOpen, setIsServerListOpen] = useState(false);
   const [isAccountUtilsOpen, setIsAccountUtilsOpen] = useState(false);
   const [isImportExportOpen, setIsImportExportOpen] = useState(false);
+  const [isMultiLoginOpen, setIsMultiLoginOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([]);
@@ -92,6 +94,24 @@ function App() {
     };
   }, [fetchAccounts]);
 
+  // Surface login page state (captcha / locked / 2sv / wrong password) detected
+  // inside the Roblox login window, so the user knows why it's stuck.
+  useEffect(() => {
+    const messages: Record<string, string> = {
+      captcha: 'Captcha detected in the login window — solve it there to continue.',
+      locked: 'Account locked: Roblox wants a human check. Confirm it in the login window.',
+      twostep: '2-step verification required — enter your code in the login window.',
+      error: 'Login failed: incorrect username or password.',
+    };
+    const unlisten = listen<{ label: string; state: string }>('login-state', (event) => {
+      const msg = messages[event.payload.state];
+      if (msg) setNotice(msg);
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
   // Fetch groups on mount and when accounts change
   useEffect(() => {
     const fetchGroups = async () => {
@@ -134,7 +154,7 @@ function App() {
 
   return (
     <div className="app-container">
-      <WorkspaceNav groups={groups} selectedGroup={selectedGroup} onGroup={setSelectedGroup} count={accounts.length} onServers={() => setIsServerListOpen(true)} onTransfer={() => setIsImportExportOpen(true)} onSettings={() => setIsSettingsOpen(true)} />
+      <WorkspaceNav groups={groups} selectedGroup={selectedGroup} onGroup={setSelectedGroup} count={accounts.length} onServers={() => setIsServerListOpen(true)} onTransfer={() => setIsImportExportOpen(true)} onSettings={() => setIsSettingsOpen(true)} onMultiLogin={() => setIsMultiLoginOpen(true)} />
       <div className="workspace-shell">
       <header className="workspace-header">
         <div className="workspace-breadcrumb">Workspace <span>/</span> <strong>{selectedGroup === 'All' ? 'All accounts' : selectedGroup}</strong></div>
@@ -223,6 +243,12 @@ function App() {
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
       />}
+      <BulkLoginDialog
+        isOpen={isMultiLoginOpen}
+        onClose={() => setIsMultiLoginOpen(false)}
+        onProgress={fetchAccounts}
+      />
+
       {notice && <div className="workspace-toast" role="status"><span>{notice}</span><button className="btn btn-icon" aria-label="Dismiss notification" onClick={() => setNotice(null)}>×</button></div>}
 
     </div>
