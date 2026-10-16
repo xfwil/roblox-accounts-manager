@@ -159,7 +159,28 @@ pub async fn refresh_account(id: String, state: State<'_, AppState>) -> AppResul
         store.get_cookie(&uuid)?
     };
 
-    let user = state.roblox.get_authenticated_user(&cookie).await?;
+    let user = match state.roblox.get_authenticated_user(&cookie).await {
+        Ok(u) => u,
+        Err(e) => {
+            // Persist durable account states; network/5xx blips flag nothing.
+            //  - 401 InvalidCookie  → cookie is dead (re-login needed)
+            //  - 403 Moderated      → cookie alive but account is banned/moderated
+            if let Ok(mut store) = state.store.lock() {
+                match &e {
+                    crate::error::AppError::InvalidCookie(_) => {
+                        let _ = store.set_flag(&uuid, "cookie_dead", true);
+                        let _ = store.set_flag(&uuid, "moderated", false);
+                    }
+                    crate::error::AppError::Moderated(_) => {
+                        let _ = store.set_flag(&uuid, "moderated", true);
+                        let _ = store.set_flag(&uuid, "cookie_dead", false);
+                    }
+                    _ => {}
+                }
+            }
+            return Err(e);
+        }
+    };
 
     let (robux, premium, avatar_url, details) = tokio::join!(
         state.roblox.get_robux(user.id, &cookie),
@@ -182,6 +203,10 @@ pub async fn refresh_account(id: String, state: State<'_, AppState>) -> AppResul
     if let Ok(details) = details {
         account.description = details.description;
     }
+    // Refresh succeeded → the cookie is alive and the account is in good
+    // standing; clear any stale problem markers.
+    account.fields.remove("cookie_dead");
+    account.fields.remove("moderated");
 
     let view = account.to_view();
     store.update_account(account)?;

@@ -123,6 +123,9 @@ input[type='checkbox'], input[type='radio'] { accent-color: var(--accent-primary
 .user-secondary { font-size: 11px; margin-top: 2px; }
 .badge { border-radius: 5px; background: var(--surface-raised); border: 1px solid var(--border-color); padding: 2px 7px; font-size: 10px; }
 .badge-premium { color: var(--premium-color); border-color: color-mix(in srgb, var(--premium-color) 30%, transparent); background: color-mix(in srgb, var(--premium-color) 10%, transparent); }
+.badge-facelock { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 35%, transparent); background: color-mix(in srgb, var(--warning) 12%, transparent); font-weight: 600; }
+.badge-dead { color: var(--error); border-color: color-mix(in srgb, var(--error) 35%, transparent); background: color-mix(in srgb, var(--error) 12%, transparent); font-weight: 600; }
+.badge-moderated { color: #fff; border-color: var(--error); background: var(--error); font-weight: 700; }
 .alias-text { font-style: normal; }
 .robux-val { font-size: 12px; font-variant-numeric: tabular-nums; }
 .account-list-empty { flex: 1; min-height: 150px; padding: 24px; gap: 12px; }

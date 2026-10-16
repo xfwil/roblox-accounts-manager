@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
-import { Modal } from './Modal';
+import { Icon } from './Icon';
 import { startBulkLogin, cancelBulkLogin, type Credential } from '../api/login';
-import './BulkLoginDialog.css';
+import './MultiLoginPage.css';
 
 type RowState =
   | 'queued' | 'filling' | 'captcha' | 'locked' | 'twostep'
@@ -12,13 +12,13 @@ interface Row {
   username: string;
   state: RowState;
   message: string;
-  thumb?: string; // data URL, fed by `bulk-thumb`
+  thumb?: string; // data URL from `bulk-thumb`
+  flag?: RowState; // a challenge (captcha/locked/twostep) seen during login — kept even after "done"
 }
 
 interface BulkProgress { index: number; username: string; state: RowState; message: string }
 interface BulkThumb { index: number; dataUrl: string }
 
-/** States that need the user to act in the window. */
 const NEEDS_YOU: RowState[] = ['captcha', 'locked', 'twostep'];
 const LABEL: Record<RowState, string> = {
   queued: 'Queued', filling: 'Signing in', captcha: 'Captcha', locked: 'Face-lock',
@@ -40,11 +40,7 @@ function parseCredentials(text: string): Credential[] {
     .filter((c): c is Credential => c !== null);
 }
 
-export function BulkLoginDialog({ isOpen, onClose, onProgress }: {
-  isOpen: boolean;
-  onClose: () => void;
-  onProgress: () => void; // refresh accounts list when one is added
-}) {
+export function MultiLoginPage({ onProgress }: { onProgress: () => void }) {
   const [text, setText] = useState('');
   const [concurrency, setConcurrency] = useState(2);
   const [running, setRunning] = useState(false);
@@ -54,13 +50,15 @@ export function BulkLoginDialog({ isOpen, onClose, onProgress }: {
 
   const parsed = useMemo(() => parseCredentials(text), [text]);
 
-  // Listen for backend progress + thumbnails while the dialog is mounted.
   useEffect(() => {
-    if (!isOpen) return;
     const unsubs = [
       listen<BulkProgress>('bulk-progress', (e) => {
         const { index, username, state, message } = e.payload;
-        setRows((prev) => ({ ...prev, [index]: { ...prev[index], username, state, message } }));
+        setRows((prev) => {
+          const prevRow = prev[index];
+          const flag = NEEDS_YOU.includes(state) ? state : prevRow?.flag;
+          return { ...prev, [index]: { ...prevRow, username, state, message, flag } };
+        });
         if (state === 'done') onProgressRef.current();
       }),
       listen<BulkThumb>('bulk-thumb', (e) => {
@@ -70,14 +68,10 @@ export function BulkLoginDialog({ isOpen, onClose, onProgress }: {
       listen('bulk-login-finished', () => setRunning(false)),
     ];
     return () => { unsubs.forEach((u) => u.then((fn) => fn())); };
-  }, [isOpen]);
+  }, []);
 
-  if (!isOpen) return null;
-
-  const counts = Object.values(rows).reduce((acc, r) => {
-    acc[r.state] = (acc[r.state] ?? 0) + 1;
-    return acc;
-  }, {} as Record<string, number>);
+  const rowList = Object.entries(rows).sort((a, b) => Number(a[0]) - Number(b[0]));
+  const counts = rowList.reduce((acc, [, r]) => { acc[r.state] = (acc[r.state] ?? 0) + 1; return acc; }, {} as Record<string, number>);
 
   const start = async () => {
     if (!parsed.length || running) return;
@@ -95,67 +89,76 @@ export function BulkLoginDialog({ isOpen, onClose, onProgress }: {
 
   const cancel = async () => { await cancelBulkLogin(); };
 
-  const hasRows = Object.keys(rows).length > 0;
+  const hasRows = rowList.length > 0;
 
   return (
-    <Modal
-      title="Multi-login with Roblox"
-      description="Paste accounts as username:password, one per line. Captcha and face-lock are solved in each window; the cookie is saved as soon as it appears."
-      onClose={onClose}
-      className="modal-wide bulk-login-modal"
-    >
-      <div className="bulk-body">
-        <section className="bulk-input">
-          <label className="bulk-field">
-            <span>Accounts <small>({parsed.length} parsed)</small></span>
+    <div className="multilogin-page">
+      <section className="ml-heading">
+        <div>
+          <h1>Multi-login with Roblox</h1>
+          <p>Log into many accounts at once. Captcha and face-lock are solved in each window; the cookie is saved the moment it appears.</p>
+        </div>
+      </section>
+
+      <div className="ml-grid">
+        <aside className="ml-input-card">
+          <label className="ml-field">
+            <span>Accounts <small>· {parsed.length} parsed</small></span>
             <textarea
               value={text}
               onChange={(e) => setText(e.target.value)}
-              placeholder={'user1:password1\nuser2:password2'}
+              placeholder={'username:password\nusername,password\nusername | password'}
               spellCheck={false}
               disabled={running}
-              rows={8}
             />
           </label>
-          <div className="bulk-controls">
-            <label className="bulk-conc">
-              Parallel windows
+          <div className="ml-controls">
+            <label className="ml-conc">
+              <span>Parallel windows</span>
               <select value={concurrency} onChange={(e) => setConcurrency(Number(e.target.value))} disabled={running}>
                 {[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n}</option>)}
               </select>
             </label>
             {running
-              ? <button className="btn btn-secondary" onClick={cancel}>Cancel</button>
-              : <button className="btn btn-primary" onClick={start} disabled={!parsed.length}>Start login</button>}
+              ? <button className="btn btn-secondary ml-action" onClick={cancel}><Icon name="close" size={15} />Cancel</button>
+              : <button className="btn btn-primary ml-action" onClick={start} disabled={!parsed.length}><Icon name="arrow" size={15} />Start login</button>}
           </div>
-          <p className="bulk-note">Credentials are used once and never written to disk.</p>
-        </section>
-
-        {hasRows && (
-          <section className="bulk-status">
-            <div className="bulk-summary">
+          <p className="ml-note"><Icon name="shield" size={14} /> Credentials are used once and never written to disk.</p>
+          {hasRows && (
+            <div className="ml-summary">
               {counts.done ? <span className="chip chip-done">{counts.done} added</span> : null}
               {NEEDS_YOU.some((s) => counts[s]) ? <span className="chip chip-attn">needs you</span> : null}
               {counts.error ? <span className="chip chip-error">{counts.error} failed</span> : null}
-              {running ? <span className="chip">running…</span> : <span className="chip">done</span>}
+              <span className="chip">{running ? 'running…' : 'idle'}</span>
             </div>
-            <ul className="bulk-rows">
-              {Object.entries(rows).map(([i, r]) => (
-                <li key={i} className={`bulk-row state-${r.state} ${NEEDS_YOU.includes(r.state) ? 'attn' : ''}`}>
-                  <div className="bulk-thumb">
-                    {r.thumb ? <img src={r.thumb} alt="" /> : <span className="bulk-thumb-ph" />}
+          )}
+        </aside>
+
+        <section className="ml-status" aria-label="Login progress">
+          {!hasRows ? (
+            <div className="ml-empty">
+              <Icon name="accounts" size={34} />
+              <p>Paste accounts and hit <strong>Start login</strong>.<br />Each window shows up here live as it signs in.</p>
+            </div>
+          ) : (
+            <div className="ml-cards">
+              {rowList.map(([i, r]) => (
+                <article key={i} className={`ml-card state-${r.state} ${NEEDS_YOU.includes(r.state) || r.flag ? 'attn' : ''}`}>
+                  <div className="ml-thumb">
+                    {r.thumb ? <img src={r.thumb} alt="" /> : <span className="ml-thumb-ph" />}
+                    <span className={`ml-badge badge-${r.state}`}>{LABEL[r.state]}</span>
+                    {r.flag && r.flag !== r.state && <span className="ml-flag">{LABEL[r.flag]}</span>}
                   </div>
-                  <div className="bulk-row-main">
-                    <strong>{r.username}</strong>
-                    <span className="bulk-row-msg">{r.message}</span>
+                  <div className="ml-card-foot">
+                    <strong title={r.username}>{r.username}</strong>
+                    <span className="ml-msg" title={r.message}>{r.message}</span>
                   </div>
-                  <span className={`bulk-badge badge-${r.state}`}>{LABEL[r.state]}</span>
-                </li>
+                </article>
               ))}
-            </ul>
-          </section>
-        )}
+            </div>
+          )}
+        </section>
       </div>
-    </Modal>
+    </div>
   );
 }

@@ -6,7 +6,15 @@ import './AccountList.css';
 import { Modal } from './Modal';
 import { openBrowser } from '../api/login';
 
-type SortField = 'username' | 'alias' | 'group' | 'robux' | 'last_used' | 'created_at' | 'sort_order';
+type SortField = 'username' | 'alias' | 'group' | 'robux' | 'last_used' | 'created_at' | 'sort_order' | 'status';
+
+// Lower = more urgent, so an ascending sort surfaces broken accounts first.
+function statusRank(acc: AccountView): number {
+  if (acc.fields?.moderated === '1') return 0;
+  if (acc.fields?.cookie_dead === '1') return 1;
+  if (acc.fields?.facelock === '1') return 2;
+  return 3;
+}
 type SortDirection = 'asc' | 'desc';
 
 interface AccountListProps {
@@ -131,6 +139,9 @@ export function AccountList({
           cmp = aCreated - bCreated;
           break;
         }
+        case 'status':
+          cmp = statusRank(a) - statusRank(b);
+          break;
         case 'sort_order':
         default:
           cmp = a.sort_order - b.sort_order;
@@ -329,6 +340,9 @@ export function AccountList({
             </th>
             <th className="col-date-added sortable-header" onClick={() => handleSort('created_at')}>
               <button type="button" onClick={event => { event.stopPropagation(); handleSort('created_at'); }}>Date Added{sortIndicator('created_at')}</button>
+            </th>
+            <th className="col-status sortable-header" onClick={() => handleSort('status')}>
+              <button type="button" onClick={event => { event.stopPropagation(); handleSort('status'); }}>Status{sortIndicator('status')}</button>
             </th>
             <th aria-label="Account actions" />
           </tr>

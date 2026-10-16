@@ -118,6 +118,13 @@
   padding-right: var(--spacing-lg) !important;
 }
 
+.col-status {
+  width: 10%;
+  min-width: 92px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
 .text-muted {
   color: var(--text-muted);
 }

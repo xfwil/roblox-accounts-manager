@@ -27,6 +27,12 @@ pub struct LoginStatePayload {
     pub state: String,
 }
 
+/// WebView2 freezes JS timers in backgrounded/occluded windows, which stalls
+/// the human-typing loop mid-word once a second login window covers the first.
+/// These Chromium flags keep timers running when the window isn't focused.
+/// (additional_browser_args REPLACES wry's default, so the defaults are kept here.)
+const NO_THROTTLE_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding";
+
 /// State codes the detect script can report. Any window title whose first
 /// " | "-segment isn't one of these is the page's own title — ignored.
 const KNOWN_STATES: [&str; 7] = [
@@ -58,16 +64,20 @@ const DETECT_JS: &str = r#"
     return ['loading', 'Loading…'];
   }
 
+  // Report state via the URL hash (document.title does NOT propagate to the OS
+  // window title in a Tauri webview, so window.title() can't be read back).
+  // Rust reads it with win.url().fragment(). Roblox uses path routing, so a
+  // rams= fragment is ignored by its router and never reloads.
+  var lastCode = '';
   function tick() {
     try {
-      var s = classify();
-      var marker = s[0] + ' | ' + s[1];
-      if (document.title !== marker) document.title = marker;
+      var code = classify()[0];
+      if (code !== lastCode) { lastCode = code; location.hash = 'rams=' + code; }
     } catch (e) {}
   }
 
   tick();
-  setInterval(tick, 900);
+  setInterval(tick, 700);
   if (document.body) new MutationObserver(tick).observe(document.body, { childList: true, subtree: true });
   else document.addEventListener('DOMContentLoaded', function () {
     tick();
@@ -94,6 +104,15 @@ fn cookie_present(win: &tauri::WebviewWindow) -> bool {
     false
 }
 
+/// Extract the detect-script state code from a window URL's `#rams=<code>`
+/// fragment. Empty string when absent.
+fn url_state(u: &tauri::Url) -> String {
+    u.fragment()
+        .and_then(|f| f.strip_prefix("rams="))
+        .unwrap_or("")
+        .to_string()
+}
+
 /// Poll a login window's title for the detect-script state code and emit
 /// `login-state` on every change. When `finalize` is set (single-login
 /// window), it also harvests the cookie the moment it appears — even on a
@@ -103,19 +122,20 @@ fn spawn_login_state_poller(app: AppHandle, label: String, finalize: bool) {
     tauri::async_runtime::spawn(async move {
         let mut last = String::new();
         let mut done = false;
+        let mut saw_lock = false; // a face-lock screen appeared before harvest
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(800)).await;
             let win = match app.get_webview_window(&label) {
                 Some(w) => w,
                 None => break, // window closed
             };
-            let title = match win.title() {
-                Ok(t) => t,
+            let code = match win.url() {
+                Ok(u) => url_state(&u),
                 Err(_) => break,
             };
-            let code = title.split(" | ").next().unwrap_or("").trim().to_string();
             if KNOWN_STATES.contains(&code.as_str()) && code != last {
                 last = code.clone();
+                if code == "locked" { saw_lock = true; }
                 let _ = app.emit_to(
                     "main",
                     "login-state",
@@ -128,7 +148,7 @@ fn spawn_login_state_poller(app: AppHandle, label: String, finalize: bool) {
             if finalize && !done && code != "error" && code != "login" && code != "loading" {
                 if cookie_present(&win) {
                     done = true;
-                    let res = do_extract_and_add(&app, &win, None).await;
+                    let res = do_extract_and_add(&app, &win, None, saw_lock).await;
                     let payload = match res {
                         Ok(v) => LoginCompletePayload { success: true, account: Some(v), error: None },
                         Err(e) => LoginCompletePayload { success: false, account: None, error: Some(e.to_string()) },
@@ -163,6 +183,7 @@ pub async fn open_login_window(app: AppHandle) -> AppResult<()> {
     .inner_size(900.0, 700.0)
     .center()
     .resizable(true)
+    .additional_browser_args(NO_THROTTLE_ARGS)
     .initialization_script(DETECT_JS)
     .build()
     .map_err(|e| AppError::Other(format!("Failed to create login window: {}", e)))?;
@@ -185,6 +206,7 @@ async fn do_extract_and_add(
     app: &AppHandle,
     login_window: &tauri::WebviewWindow,
     fallback_username: Option<&str>,
+    facelocked: bool,
 ) -> AppResult<AccountView> {
     // Try cookies_for_url first, then fall back to all cookies
     let roblox_url: tauri::Url = "https://www.roblox.com".parse().unwrap();
@@ -271,6 +293,10 @@ async fn do_extract_and_add(
 
     // Use upsert: if same user_id or username already exists, update instead of adding duplicate
     let final_id = store.upsert_account(account, &cookie_value)?;
+
+    // Persist the face-lock flag AFTER upsert — upsert keeps the existing
+    // account's `fields`, so this has to be written on the stored record.
+    store.set_facelock(&final_id, facelocked)?;
 
     // Get the final account view (may have preserved fields from existing account)
     let final_account = store.get_account(&final_id)?.clone();
@@ -588,25 +614,77 @@ const BULK_FILL_JS: &str = r#"
   if (window.__RAM_FILL__) return;
   window.__RAM_FILL__ = true;
   var U = __U__, P = __P__, tries = 0;
-  function setNativeValue(el, val) {
-    var d = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value');
-    if (d && d.set) d.set.call(el, val); else el.value = val;        // React-controlled input
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
+  function rand(a, b) { return a + Math.floor(Math.random() * (b - a)); }
+
+  // Type char-by-char, re-querying the element each step and resuming from the
+  // common prefix so a background reset/remount can't truncate it.
+  function typeHuman(selector, text, done) {
+    var misses = 0;
+    (function step() {
+      var el = document.querySelector(selector);
+      if (!el) { if (++misses > 120) { done(); return; } setTimeout(step, 120); return; }
+      var i = 0;
+      while (i < text.length && el.value.charAt(i) === text.charAt(i)) i++;
+      if (i >= text.length) { el.dispatchEvent(new Event('change', { bubbles: true })); done(); return; }
+      if (i === 0) el.focus();
+      var ch = text.charAt(i);
+      var setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value');
+      el.dispatchEvent(new KeyboardEvent('keydown', { key: ch, bubbles: true }));
+      if (setter && setter.set) setter.set.call(el, text.slice(0, i + 1)); else el.value = text.slice(0, i + 1);
+      el.dispatchEvent(new InputEvent('input', { data: ch, inputType: 'insertText', bubbles: true }));
+      el.dispatchEvent(new KeyboardEvent('keyup', { key: ch, bubbles: true }));
+      setTimeout(step, rand(70, 150));
+    })();
   }
-  function fill() {
+  function pressEnter(el) {
+    if (!el) return;
+    el.focus();
+    ['keydown', 'keypress', 'keyup'].forEach(function (t) {
+      el.dispatchEvent(new KeyboardEvent(t, { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+    });
+  }
+  // Submit via BOTH the button click and Enter in the password field — on
+  // Roblox the button click can get swallowed by the passkey (WebAuthn) flow,
+  // while Enter goes straight through the password-login path.
+  function clickLogin() {
+    var b = document.querySelector('#login-button, button[type=submit]');
+    if (b) {
+      b.disabled = false;
+      var o = { bubbles: true, cancelable: true, view: window, button: 0 };
+      try { b.dispatchEvent(new MouseEvent('mousedown', o)); } catch (e) {}
+      try { b.dispatchEvent(new MouseEvent('mouseup', o)); } catch (e) {}
+      b.click();
+    }
+    pressEnter(document.querySelector('#login-password'));
+    return !!b;
+  }
+  function busy() {
+    return /captcha|challenge|verify|incorrect|two-step|verification|suspicious|locked|one-time/i.test(document.body.innerText)
+      || !!document.querySelector('iframe[src*=arkose],iframe[src*=funcaptcha]');
+  }
+
+  var wait = setInterval(function () {
     var u = document.querySelector('#login-username');
     var p = document.querySelector('#login-password');
-    var btn = document.querySelector('#login-button, button[type=submit]');
-    if (u && p) {
-      setNativeValue(u, U);
-      setNativeValue(p, P);
-      if (btn) { btn.disabled = false; btn.click(); }
-      return true;
-    }
-    return false;
-  }
-  var iv = setInterval(function () { if (fill() || ++tries > 40) clearInterval(iv); }, 500);
+    if (!u || !p) { if (++tries > 80) clearInterval(wait); return; } // wait for React to mount (~24s cap)
+    clearInterval(wait);
+    typeHuman('#login-username', U, function () {
+      setTimeout(function () {
+        typeHuman('#login-password', P, function () {
+          setTimeout(function () {
+            clickLogin();
+            // Conservative retries only while the plain login form is still idle
+            // (no challenge/error yet). Spaced out — never hammered.
+            var retries = 0;
+            var rt = setInterval(function () {
+              if (!document.querySelector('#login-username') || busy() || ++retries > 4) { clearInterval(rt); return; }
+              clickLogin();
+            }, 2500);
+          }, rand(700, 1100));
+        });
+      }, rand(400, 700));
+    });
+  }, 300);
 })();
 "#;
 
@@ -756,6 +834,7 @@ async fn run_bulk_slot(app: AppHandle, queue: BulkQueue, data_root: PathBuf) {
         .resizable(true)
         .user_agent(ua)
         .data_directory(dir)
+        .additional_browser_args(NO_THROTTLE_ARGS)
         .initialization_script(&bulk_init_script(&cred.username, &cred.password))
         .build();
 
@@ -772,6 +851,7 @@ async fn run_bulk_slot(app: AppHandle, queue: BulkQueue, data_root: PathBuf) {
         // Poll this window until terminal.
         let started = Instant::now();
         let mut last = String::new();
+        let mut challenged = String::new(); // captcha/locked/twostep seen before harvest
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(700)).await;
 
@@ -788,27 +868,21 @@ async fn run_bulk_slot(app: AppHandle, queue: BulkQueue, data_root: PathBuf) {
                     break;
                 }
             };
-            let title = match w.title() {
-                Ok(t) => t,
+            let code = match w.url() {
+                Ok(u) => url_state(&u),
                 Err(_) => {
                     emit_progress(&app, index, &cred.username, "skipped", "Window closed");
                     break;
                 }
             };
-            let code = title.split(" | ").next().unwrap_or("").trim().to_string();
 
-            // Harvest as soon as the cookie exists — even behind a lock/captcha.
-            if code != "error" && code != "login" && code != "loading" && cookie_present(&w) {
-                match do_extract_and_add(&app, &w, Some(&cred.username)).await {
-                    Ok(v) => emit_progress(&app, index, &v.username, "done", "Added"),
-                    Err(e) => emit_progress(&app, index, &cred.username, "error", &e.to_string()),
-                }
-                let _ = w.close();
-                break;
-            }
-
+            // Report state transitions FIRST, so a captcha / face-lock / 2sv is
+            // surfaced even when the cookie gets harvested on this same tick.
             if KNOWN_STATES.contains(&code.as_str()) && code != last {
                 last = code.clone();
+                if matches!(code.as_str(), "captcha" | "locked" | "twostep") {
+                    challenged = code.clone();
+                }
                 let (st, msg): (&str, &str) = match code.as_str() {
                     "captcha" => ("captcha", "Captcha — solve it in the window"),
                     "locked" => ("locked", "Face-lock — confirm in the window"),
@@ -817,6 +891,29 @@ async fn run_bulk_slot(app: AppHandle, queue: BulkQueue, data_root: PathBuf) {
                     _ => ("filling", "Signing in…"),
                 };
                 emit_progress(&app, index, &cred.username, st, msg);
+            }
+
+            // Harvest as soon as the cookie exists — even behind a lock/captcha.
+            // Note which challenge was on screen so the user knows the account
+            // was face-locked etc. even though the cookie was saved.
+            if code != "error" && code != "login" && code != "loading" && cookie_present(&w) {
+                let flag = if matches!(challenged.as_str(), "captcha" | "locked" | "twostep") {
+                    challenged.as_str()
+                } else {
+                    code.as_str()
+                };
+                let note = match flag {
+                    "locked" => "Cookie saved — account was face-locked",
+                    "captcha" => "Cookie saved — passed a captcha",
+                    "twostep" => "Cookie saved — 2-step was shown",
+                    _ => "Added",
+                };
+                match do_extract_and_add(&app, &w, Some(&cred.username), challenged == "locked").await {
+                    Ok(v) => emit_progress(&app, index, &v.username, "done", note),
+                    Err(e) => emit_progress(&app, index, &cred.username, "error", &e.to_string()),
+                }
+                let _ = w.close();
+                break;
             }
 
             // Wrong password is terminal; let the user glimpse it, then move on.

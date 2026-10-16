@@ -60,6 +60,8 @@ export function useAccounts() {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setError(`Failed to refresh account: ${msg}`);
+      // Backend may have flagged the cookie dead — pull fresh views so the row shows it.
+      await fetchAccounts();
       throw err;
     }
   };
@@ -73,14 +75,12 @@ export function useAccounts() {
       // Assuming listAccounts does not fetch fresh data from roblox, we might need to map over all accounts.
       // For now, let's just do individual refreshes. In a real app we might want a dedicated rust command.
       const results = await Promise.allSettled(accounts.map(a => api.refreshAccount(a.id)));
-      const updated = new Map<string, AccountView>();
-      results.forEach(result => {
-        if (result.status === 'fulfilled') updated.set(result.value.id, result.value);
-      });
-      setAccounts(prev => prev.map(a => updated.get(a.id) ?? a));
+      // Each refresh persists its result (incl. a cookie-dead marker on failure);
+      // re-list so every row reflects the stored state, failures included.
+      await fetchAccounts();
       const failed = results.filter(result => result.status === 'rejected').length;
-      if (failed > 0) setError(`${failed} of ${results.length} accounts failed to refresh`);
-      
+      if (failed > 0) setError(`${failed} of ${results.length} accounts failed to refresh — check the Status column (Moderated / Cookie dead)`);
+
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setError(`Failed to refresh all: ${msg}`);

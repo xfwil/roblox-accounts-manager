@@ -176,6 +176,29 @@ impl AccountStore {
         }
     }
 
+    /// Set/clear a boolean marker in an account's free-form `fields` bag
+    /// (e.g. "facelock", "cookie_dead"). No schema change needed; saves only
+    /// when the value actually changes.
+    pub fn set_flag(&mut self, id: &Uuid, key: &str, on: bool) -> AppResult<()> {
+        if let Some(acc) = self.accounts.get_mut(id) {
+            let changed = if on {
+                acc.fields.insert(key.into(), "1".into()).as_deref() != Some("1")
+            } else {
+                acc.fields.remove(key).is_some()
+            };
+            if changed {
+                self.save()?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Mark/unmark an account as face-locked. Set at login time when the cookie
+    /// was harvested behind a face-lock screen, cleared on a clean login.
+    pub fn set_facelock(&mut self, id: &Uuid, locked: bool) -> AppResult<()> {
+        self.set_flag(id, "facelock", locked)
+    }
+
     /// Update an existing account (metadata only, not cookie)
     pub fn update_account(&mut self, account: Account) -> AppResult<()> {
         if !self.accounts.contains_key(&account.id) {
