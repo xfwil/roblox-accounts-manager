@@ -83,6 +83,47 @@ const DETECT_JS: &str = r#"
     tick();
     new MutationObserver(tick).observe(document.body, { childList: true, subtree: true });
   });
+
+  // Auto press-and-hold: Roblox's "confirm you're human" gate uses a hold
+  // button in the TOP frame (we already skip the arkose iframe above, so a
+  // FunCaptcha hold is never touched). The hold duration is set by Roblox, so
+  // press and keep holding until the button goes away — don't release early.
+  // The actual face/selfie scan still needs the real person.
+  var held = null, mv = null, cap = null;
+  function findHold() {
+    var els = document.querySelectorAll('button,[role="button"],[class*="hold" i]');
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i];
+      if (!el.offsetParent) continue; // visible only
+      var t = (el.innerText || el.textContent || '').trim();
+      if (/press\s*(?:&|and)?\s*hold|hold\s*(?:to|down|and)/i.test(t)) return el;
+    }
+    return null;
+  }
+  function pe(el, type) {
+    var r = el.getBoundingClientRect();
+    var o = { bubbles: true, cancelable: true, composed: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, button: 0, buttons: type === 'pointerup' ? 0 : 1, pointerId: 1, pointerType: 'mouse', isPrimary: true };
+    try { el.dispatchEvent(new PointerEvent(type, o)); } catch (e) {}
+    var m = type === 'pointerdown' ? 'mousedown' : type === 'pointerup' ? 'mouseup' : 'mousemove';
+    try { el.dispatchEvent(new MouseEvent(m, o)); } catch (e) {}
+  }
+  function releaseHold() {
+    if (!held) return;
+    pe(held, 'pointerup');
+    clearInterval(mv); clearTimeout(cap); held = null;
+  }
+  setInterval(function () {
+    var el = findHold();
+    if (el && !held) {
+      held = el;
+      try { el.focus && el.focus(); } catch (e) {}
+      pe(el, 'pointerdown');
+      mv = setInterval(function () { if (held) pe(held, 'pointermove'); }, 180);
+      cap = setTimeout(releaseHold, 15000); // safety: never hold forever
+    } else if (!el && held) {
+      releaseHold(); // gate passed → button gone
+    }
+  }, 500);
 })();
 "#;
 

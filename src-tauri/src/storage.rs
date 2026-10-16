@@ -135,7 +135,9 @@ impl AccountStore {
             .or_else(|| self.find_by_username(&account.username).map(|a| a.id));
 
         if let Some(id) = existing_id {
-            // Update existing account — preserve group, alias, sort_order, created_at
+            // Update existing account — preserve user-set metadata, but bump
+            // "Date Added" to now so a re-add is visible (sort by Date Added to
+            // surface it) instead of silently merging into the old row.
             let existing = self.accounts.get(&id).unwrap().clone();
             let updated = Account {
                 id,
@@ -151,7 +153,7 @@ impl AccountStore {
                 alias: existing.alias,
                 sort_order: existing.sort_order,
                 last_used: existing.last_used,
-                created_at: existing.created_at,
+                created_at: chrono::Utc::now(),
                 fields: existing.fields,
             };
             self.accounts.insert(id, updated);
