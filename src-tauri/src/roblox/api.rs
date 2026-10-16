@@ -110,6 +110,17 @@ impl RobloxClient {
             return Err(AppError::InvalidCookie("Cookie is invalid or expired".into()));
         }
 
+        // A moderated/banned account keeps a valid cookie but Roblox answers 403
+        // with `{"errors":[{"message":"User is moderated"}]}` on authenticated
+        // endpoints. Distinguish it from a plain forbidden so we can flag it.
+        if resp.status() == 403 {
+            let body = resp.text().await.unwrap_or_default();
+            if body.contains("moderated") {
+                return Err(AppError::Moderated("User is moderated".into()));
+            }
+            return Err(AppError::RobloxApi(format!("Forbidden (403): {}", body)));
+        }
+
         if !resp.status().is_success() {
             return Err(AppError::RobloxApi(format!(
                 "Failed to get authenticated user: {}",

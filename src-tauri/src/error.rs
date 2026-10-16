@@ -23,6 +23,9 @@ pub enum AppError {
     #[error("Invalid cookie: {0}")]
     InvalidCookie(String),
 
+    #[error("Account is moderated: {0}")]
+    Moderated(String),
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 

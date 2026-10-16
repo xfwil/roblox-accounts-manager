@@ -196,6 +196,17 @@ export function AccountRow({
       <td className="col-date-added">
         <span className="text-secondary">{formatDate(account.created_at)}</span>
       </td>
+      <td className="col-status">
+        {account.fields?.moderated === '1' ? (
+          <span className="badge badge-moderated" title="Account is moderated/banned by Roblox (403 'User is moderated'). Cookie still valid.">Moderated</span>
+        ) : account.fields?.cookie_dead === '1' ? (
+          <span className="badge badge-dead" title="Last refresh failed — cookie is invalid/expired (401). Re-login this account.">Cookie dead</span>
+        ) : account.fields?.facelock === '1' ? (
+          <span className="badge badge-facelock" title="Face-locked — needed manual face verification at login. Cookie was saved; it may ask again.">Face-lock</span>
+        ) : (
+          <span className="text-muted">OK</span>
+        )}
+      </td>
       <td className="row-actions"><button className="btn-icon" aria-label={`Actions for ${account.username}`} onClick={e => { e.stopPropagation(); onContextMenu(e, account.id); }}><Icon name="more" /></button></td>
     </tr>
   );

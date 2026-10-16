@@ -1,6 +1,6 @@
 [package]
 name = "ram-manager"
-version = "0.4.0"
+version = "0.4.1"
 description = "Roblox Account Manager - Tauri rewrite"
 authors = ["you"]
 license = "MIT"
