@@ -70,16 +70,22 @@ export function useAccounts() {
     try {
       setLoading(true);
       setError(null);
-      // We could either refresh each individually or list all again depending on backend impl.
-      // Since there's no refresh_all in API, we'll refresh one by one or just list.
-      // Assuming listAccounts does not fetch fresh data from roblox, we might need to map over all accounts.
-      // For now, let's just do individual refreshes. In a real app we might want a dedicated rust command.
-      const results = await Promise.allSettled(accounts.map(a => api.refreshAccount(a.id)));
+      // Refresh in small batches — firing all accounts at once floods Roblox
+      // from one IP and trips rate-limit / bot-protection, which came back as
+      // false "cookie dead" flags on perfectly valid cookies.
+      const POOL = 5;
+      const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+      let failed = 0;
+      for (let i = 0; i < accounts.length; i += POOL) {
+        const batch = accounts.slice(i, i + POOL);
+        const results = await Promise.allSettled(batch.map(a => api.refreshAccount(a.id)));
+        failed += results.filter(result => result.status === 'rejected').length;
+        if (i + POOL < accounts.length) await sleep(250);
+      }
       // Each refresh persists its result (incl. a cookie-dead marker on failure);
       // re-list so every row reflects the stored state, failures included.
       await fetchAccounts();
-      const failed = results.filter(result => result.status === 'rejected').length;
-      if (failed > 0) setError(`${failed} of ${results.length} accounts failed to refresh — check the Status column (Moderated / Cookie dead)`);
+      if (failed > 0) setError(`${failed} of ${accounts.length} accounts failed to refresh — check the Status column (Moderated / Cookie dead)`);
 
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
