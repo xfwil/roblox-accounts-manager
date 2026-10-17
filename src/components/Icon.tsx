@@ -13,6 +13,7 @@ const paths = {
   refresh: 'M20 7v5h-5M4 17v-5h5M6 5a8 8 0 0 1 14 7M18 19a8 8 0 0 1-14-7',
   more: 'M5 12h.01M12 12h.01M19 12h.01',
   shield: 'm12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6zM8 12l3 3 5-6',
+  copy: 'M9 9h10v12H9zM5 15H3V3h12v2',
 } as const;
 
 export function Icon({ name, size = 18 }: { name: keyof typeof paths; size?: number }) {

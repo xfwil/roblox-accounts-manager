@@ -191,7 +191,7 @@ fn spawn_login_state_poller(app: AppHandle, label: String, finalize: bool) {
                     done = true;
                     let res = do_extract_and_add(&app, &win, None, saw_lock).await;
                     let payload = match res {
-                        Ok(v) => LoginCompletePayload { success: true, account: Some(v), error: None },
+                        Ok((v, _cookie)) => LoginCompletePayload { success: true, account: Some(v), error: None },
                         Err(e) => LoginCompletePayload { success: false, account: None, error: Some(e.to_string()) },
                     };
                     let _ = app.emit_to("main", "login-complete", payload);
@@ -243,35 +243,28 @@ pub async fn open_login_window(app: AppHandle) -> AppResult<()> {
 /// The cookie is the prize: if the account is face-locked/challenged so the
 /// profile fetch fails, the cookie is still saved under `fallback_username`
 /// (or a generated `locked-xxxxxx` name) rather than lost.
+/// Returns the stored account view plus the raw cookie it harvested — the
+/// caller decides whether to surface the cookie (bulk export) or drop it.
 async fn do_extract_and_add(
     app: &AppHandle,
     login_window: &tauri::WebviewWindow,
     fallback_username: Option<&str>,
     facelocked: bool,
-) -> AppResult<AccountView> {
+) -> AppResult<(AccountView, String)> {
     // Try cookies_for_url first, then fall back to all cookies
     let roblox_url: tauri::Url = "https://www.roblox.com".parse().unwrap();
     let mut cookies = login_window
         .cookies_for_url(roblox_url)
         .map_err(|e| AppError::Other(format!("Failed to get cookies for URL: {}", e)))?;
 
+    // Never log cookie names/values — .ROBLOSECURITY is a full session secret.
     log::info!("cookies_for_url returned {} cookies", cookies.len());
-    for c in &cookies {
-        log::info!("  cookie: {} = {}...", c.name(), &c.value().chars().take(20).collect::<String>());
-    }
 
     // If cookies_for_url didn't find it, try all cookies
     if !cookies.iter().any(|c| c.name() == ".ROBLOSECURITY") {
-        log::info!("Trying cookies() fallback...");
         cookies = login_window
             .cookies()
             .map_err(|e| AppError::Other(format!("Failed to get all cookies: {}", e)))?;
-        log::info!("cookies() returned {} cookies", cookies.len());
-        for c in &cookies {
-            if c.name() == ".ROBLOSECURITY" {
-                log::info!("  Found .ROBLOSECURITY in all cookies!");
-            }
-        }
     }
 
     // Find the .ROBLOSECURITY cookie
@@ -345,7 +338,7 @@ async fn do_extract_and_add(
 
     log::info!("Account upserted via WebView login: {}", view.username);
 
-    Ok(view)
+    Ok((view, cookie_value))
 }
 
 /// Open a browser window logged in as the specified account.
@@ -641,6 +634,15 @@ pub struct BulkThumb {
     pub data_url: String,
 }
 
+/// Harvested cookie for a bulk row, emitted as `bulk-cookie` ONLY when the
+/// user turned on "export cookies" — the frontend pairs it with the password
+/// it already holds to build a `user:pass:cookie` line.
+#[derive(Clone, Serialize)]
+pub struct BulkCookie {
+    pub index: usize,
+    pub cookie: String,
+}
+
 // Single concurrent bulk run. Global flags keep it simple; one run at a time.
 static BULK_RUNNING: AtomicBool = AtomicBool::new(false);
 static BULK_CANCEL: AtomicBool = AtomicBool::new(false);
@@ -766,6 +768,7 @@ type BulkQueue = Arc<Mutex<VecDeque<(usize, Credential)>>>;
 pub async fn start_bulk_login(
     credentials: Vec<Credential>,
     concurrency: usize,
+    export_cookies: bool,
     app: AppHandle,
 ) -> AppResult<()> {
     let total = credentials.len();
@@ -793,7 +796,7 @@ pub async fn start_bulk_login(
         let app = app.clone();
         let queue = queue.clone();
         let data_root = data_root.clone();
-        tauri::async_runtime::spawn(run_bulk_slot(app, queue, data_root));
+        tauri::async_runtime::spawn(run_bulk_slot(app, queue, data_root, export_cookies));
     }
 
     #[cfg(windows)]
@@ -840,9 +843,24 @@ pub fn cancel_bulk_login() {
     BULK_CANCEL.store(true, Ordering::SeqCst);
 }
 
+/// Bring a bulk-login window to the front so the user can solve a captcha /
+/// Arkose hold / 2-step manually. Invoked when a status card is clicked.
+#[tauri::command]
+pub fn focus_bulk_window(index: usize, app: AppHandle) -> AppResult<()> {
+    let label = format!("bulk-login-{}", index);
+    if let Some(win) = app.get_webview_window(&label) {
+        let _ = win.unminimize();
+        let _ = win.show();
+        let _ = win.set_focus();
+        Ok(())
+    } else {
+        Err(AppError::Other("That login window is no longer open".into()))
+    }
+}
+
 /// One worker slot: pulls accounts off the queue and logs them in one at a
 /// time, so at most `concurrency` windows are ever open.
-async fn run_bulk_slot(app: AppHandle, queue: BulkQueue, data_root: PathBuf) {
+async fn run_bulk_slot(app: AppHandle, queue: BulkQueue, data_root: PathBuf, export_cookies: bool) {
     let ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
     loop {
@@ -921,7 +939,9 @@ async fn run_bulk_slot(app: AppHandle, queue: BulkQueue, data_root: PathBuf) {
             // surfaced even when the cookie gets harvested on this same tick.
             if KNOWN_STATES.contains(&code.as_str()) && code != last {
                 last = code.clone();
-                if matches!(code.as_str(), "captcha" | "locked" | "twostep") {
+                // A login captcha is routine (everyone gets one) — not an
+                // account condition, so it's not recorded as a challenge flag.
+                if matches!(code.as_str(), "locked" | "twostep") {
                     challenged = code.clone();
                 }
                 let (st, msg): (&str, &str) = match code.as_str() {
@@ -938,19 +958,18 @@ async fn run_bulk_slot(app: AppHandle, queue: BulkQueue, data_root: PathBuf) {
             // Note which challenge was on screen so the user knows the account
             // was face-locked etc. even though the cookie was saved.
             if code != "error" && code != "login" && code != "loading" && cookie_present(&w) {
-                let flag = if matches!(challenged.as_str(), "captcha" | "locked" | "twostep") {
-                    challenged.as_str()
-                } else {
-                    code.as_str()
-                };
-                let note = match flag {
+                let note = match challenged.as_str() {
                     "locked" => "Cookie saved — account was face-locked",
-                    "captcha" => "Cookie saved — passed a captcha",
                     "twostep" => "Cookie saved — 2-step was shown",
                     _ => "Added",
                 };
                 match do_extract_and_add(&app, &w, Some(&cred.username), challenged == "locked").await {
-                    Ok(v) => emit_progress(&app, index, &v.username, "done", note),
+                    Ok((v, cookie)) => {
+                        emit_progress(&app, index, &v.username, "done", note);
+                        if export_cookies {
+                            let _ = app.emit_to("main", "bulk-cookie", BulkCookie { index, cookie });
+                        }
+                    }
                     Err(e) => emit_progress(&app, index, &cred.username, "error", &e.to_string()),
                 }
                 let _ = w.close();
