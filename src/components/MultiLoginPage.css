@@ -28,6 +28,21 @@
 .ml-action { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
 .ml-note { margin: 0; font-size: 12px; color: var(--text-muted); display: inline-flex; align-items: center; gap: 6px; }
 
+.ml-export-toggle { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-secondary); cursor: pointer; }
+.ml-export-toggle input { width: 15px; height: 15px; accent-color: var(--accent-primary); cursor: pointer; }
+.ml-export-toggle small { color: var(--text-muted); }
+.ml-export-toggle code { font-size: 11px; }
+
+.ml-export { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; border-top: 1px solid var(--border-color); }
+.ml-export-head { display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: var(--text-secondary); }
+.ml-export-head button { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; font-size: 12px; }
+.ml-export textarea {
+  width: 100%; box-sizing: border-box; resize: vertical; min-height: 110px;
+  background: var(--bg-dark); color: var(--text-primary);
+  border: 1px solid var(--border-color); border-radius: 10px; padding: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.5; outline: none;
+}
+
 .ml-summary { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 4px; border-top: 1px solid var(--border-color); margin-top: 4px; padding-top: 12px; }
 .chip { font-size: 12px; padding: 3px 10px; border-radius: 999px; background: var(--bg-secondary); color: var(--text-secondary); border: 1px solid var(--border-color); }
 .chip-done { color: var(--success); border-color: color-mix(in srgb, var(--success) 40%, transparent); }
@@ -45,6 +60,9 @@
 .ml-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
 .ml-card { background: var(--bg-panel); border: 1px solid var(--border-color); border-radius: 12px; overflow: hidden; transition: border-color .15s; }
 .ml-card.attn { border-color: color-mix(in srgb, var(--warning) 60%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--warning) 35%, transparent); }
+.ml-card.clickable { cursor: pointer; }
+.ml-card.clickable:hover { border-color: var(--accent-primary); }
+.ml-card.clickable:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 2px; }
 .ml-card.state-done { border-color: color-mix(in srgb, var(--success) 45%, transparent); }
 .ml-card.state-error { border-color: color-mix(in srgb, var(--error) 40%, transparent); }
 

@@ -15,10 +15,15 @@ export interface Credential {
 
 /** Start bulk login. Progress arrives via the `bulk-progress` event,
  *  completion via `bulk-login-finished`. */
-export async function startBulkLogin(credentials: Credential[], concurrency: number): Promise<void> {
-  return invoke<void>('start_bulk_login', { credentials, concurrency });
+export async function startBulkLogin(credentials: Credential[], concurrency: number, exportCookies: boolean): Promise<void> {
+  return invoke<void>('start_bulk_login', { credentials, concurrency, exportCookies });
 }
 
 export async function cancelBulkLogin(): Promise<void> {
   return invoke<void>('cancel_bulk_login');
+}
+
+/** Bring a bulk-login window to the front (to solve a captcha/hold manually). */
+export async function focusBulkWindow(index: number): Promise<void> {
+  return invoke<void>('focus_bulk_window', { index });
 }

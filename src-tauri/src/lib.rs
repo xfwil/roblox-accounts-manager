@@ -231,6 +231,7 @@ pub fn run() {
             commands::open_browser,
             commands::start_bulk_login,
             commands::cancel_bulk_login,
+            commands::focus_bulk_window,
             // Presence
             commands::get_account_presences,
             commands::get_single_presence,
