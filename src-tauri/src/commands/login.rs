@@ -31,7 +31,10 @@ pub struct LoginStatePayload {
 /// the human-typing loop mid-word once a second login window covers the first.
 /// These Chromium flags keep timers running when the window isn't focused.
 /// (additional_browser_args REPLACES wry's default, so the defaults are kept here.)
-const NO_THROTTLE_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding";
+/// `--lang=en-US` forces Roblox to render the login/challenge pages in English
+/// so the state-detection text below matches — a localized (e.g. Indonesian)
+/// page would otherwise slip past "locked"/"press and hold" and stall.
+const NO_THROTTLE_ARGS: &str = "--lang=en-US --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding";
 
 /// State codes the detect script can report. Any window title whose first
 /// " | "-segment isn't one of these is the page's own title — ignored.
@@ -57,7 +60,7 @@ const DETECT_JS: &str = r#"
     if (/\/home/.test(href) && !/\/login/.test(href)) return ['success', 'Signed in'];
     if (document.querySelector('iframe[src*="arkoselabs"],iframe[src*="funcaptcha"],iframe[title*="challenge" i],[id^="arkose"],#arkose-game,#FunCaptcha')) return ['captcha', 'Solve the challenge to continue'];
     var txt = document.body ? document.body.innerText : '';
-    if (/account\s+(?:has been\s+)?locked|suspicious activity|confirm(?:ing)?\s+that\s+you['’]?re\s+a?\s*human|verify\s+(?:that\s+)?you['’]?re\s+a?\s*human/i.test(txt)) return ['locked', 'Account locked — confirm you are human'];
+    if (/account\s+(?:has been\s+)?locked|suspicious activity|confirm(?:ing)?\s+that\s+you['’]?re\s+a?\s*human|verify\s+(?:that\s+)?you['’]?re\s+a?\s*human|akun.{0,20}terkunci|aktivitas.{0,10}mencurigakan|(?:k|meng)onfirmasi.{0,30}manusia|verifikasi.{0,20}manusia|mem?buka\s*kunci\s*akun/i.test(txt)) return ['locked', 'Account locked — confirm you are human'];
     if (/two[- ]step|2-step|verification code|security code|authenticator/i.test(txt) || /2sv|two-step/i.test(href)) return ['twostep', 'Enter your verification code'];
     if (/incorrect username or password|wasn['’]?t quite right|didn['’]?t match|invalid password/i.test(txt)) return ['error', 'Incorrect username or password'];
     if (document.querySelector('#login-username, input#login-username, form#login-form')) return ['login', 'Waiting for login'];
@@ -96,7 +99,7 @@ const DETECT_JS: &str = r#"
       var el = els[i];
       if (!el.offsetParent) continue; // visible only
       var t = (el.innerText || el.textContent || '').trim();
-      if (/press\s*(?:&|and)?\s*hold|hold\s*(?:to|down|and)/i.test(t)) return el;
+      if (/press\s*(?:&|and)?\s*hold|hold\s*(?:to|down|and)|tekan\s*(?:&|dan)?\s*tahan|tahan\s*(?:untuk|dan)/i.test(t)) return el;
     }
     return null;
   }
@@ -124,6 +127,26 @@ const DETECT_JS: &str = r#"
       releaseHold(); // gate passed → button gone
     }
   }, 500);
+
+  // Auto-advance the "Account locked / Akun terkunci" intro dialog past its
+  // Continue button so the flow reaches the human-check step on its own. Only
+  // the primary continue action — NEVER "Log out / Keluar". The real
+  // verification (QR scan / press-and-hold / selfie) still needs the person.
+  var advanced = new WeakSet();
+  setInterval(function () {
+    var els = document.querySelectorAll('button,[role="button"]');
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i];
+      if (!el.offsetParent || advanced.has(el)) continue; // visible, once each
+      var t = (el.innerText || el.textContent || '').trim();
+      if (/log\s*out|keluar|batal|cancel/i.test(t)) continue;      // never these
+      if (/^\s*(?:lanjutkan|continue|unlock|buka kunci)\s*$/i.test(t)) {
+        advanced.add(el);
+        try { el.click(); } catch (e) {}
+        break;
+      }
+    }
+  }, 600);
 })();
 "#;
 
@@ -702,7 +725,7 @@ const BULK_FILL_JS: &str = r#"
     return !!b;
   }
   function busy() {
-    return /captcha|challenge|verify|incorrect|two-step|verification|suspicious|locked|one-time/i.test(document.body.innerText)
+    return /captcha|challenge|verify|incorrect|two-step|verification|suspicious|locked|one-time|terkunci|verifikasi|mencurigakan|tekan.{0,3}tahan|kode/i.test(document.body.innerText)
       || !!document.querySelector('iframe[src*=arkose],iframe[src*=funcaptcha]');
   }
 
@@ -769,6 +792,7 @@ pub async fn start_bulk_login(
     credentials: Vec<Credential>,
     concurrency: usize,
     export_cookies: bool,
+    gap_ms: u64,
     app: AppHandle,
 ) -> AppResult<()> {
     let total = credentials.len();
@@ -796,7 +820,7 @@ pub async fn start_bulk_login(
         let app = app.clone();
         let queue = queue.clone();
         let data_root = data_root.clone();
-        tauri::async_runtime::spawn(run_bulk_slot(app, queue, data_root, export_cookies));
+        tauri::async_runtime::spawn(run_bulk_slot(app, queue, data_root, export_cookies, gap_ms));
     }
 
     #[cfg(windows)]
@@ -860,7 +884,7 @@ pub fn focus_bulk_window(index: usize, app: AppHandle) -> AppResult<()> {
 
 /// One worker slot: pulls accounts off the queue and logs them in one at a
 /// time, so at most `concurrency` windows are ever open.
-async fn run_bulk_slot(app: AppHandle, queue: BulkQueue, data_root: PathBuf, export_cookies: bool) {
+async fn run_bulk_slot(app: AppHandle, queue: BulkQueue, data_root: PathBuf, export_cookies: bool, gap_ms: u64) {
     let ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
     loop {
@@ -995,6 +1019,12 @@ async fn run_bulk_slot(app: AppHandle, queue: BulkQueue, data_root: PathBuf, exp
 
         // Let WebView2 release the data-dir lock before the next account.
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        // User-set gap between accounts: the first `concurrency` windows open at
+        // once, then each slot waits this long before picking up the next one —
+        // spaces out the load so Roblox isn't hit by a burst.
+        if gap_ms > 0 && !BULK_CANCEL.load(Ordering::SeqCst) {
+            tokio::time::sleep(std::time::Duration::from_millis(gap_ms)).await;
+        }
     }
 
     // Last slot out turns off the lights.

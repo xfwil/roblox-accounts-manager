@@ -47,6 +47,7 @@ function parseCredentials(text: string): Credential[] {
 export function MultiLoginPage({ onProgress }: { onProgress: () => void }) {
   const [text, setText] = useState('');
   const [concurrency, setConcurrency] = useState(2);
+  const [submitDelay, setSubmitDelay] = useState(0); // seconds each slot waits before picking up the next account (0 = none)
   const [running, setRunning] = useState(false);
   const [rows, setRows] = useState<Record<number, Row>>({});
   const [exportCookies, setExportCookies] = useState(false);
@@ -96,7 +97,7 @@ export function MultiLoginPage({ onProgress }: { onProgress: () => void }) {
     setCopied(false);
     setRunning(true);
     try {
-      await startBulkLogin(parsed, concurrency, exportCookies);
+      await startBulkLogin(parsed, concurrency, exportCookies, submitDelay * 1000);
     } catch (err) {
       setRunning(false);
       setRows((prev) => ({ ...prev, [-1]: { username: '—', state: 'error', message: String(err) } }));
@@ -141,6 +142,13 @@ export function MultiLoginPage({ onProgress }: { onProgress: () => void }) {
               <span>Parallel windows</span>
               <select value={concurrency} onChange={(e) => setConcurrency(Number(e.target.value))} disabled={running}>
                 {[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </label>
+            <label className="ml-conc">
+              <span>Delay between accounts</span>
+              <select value={submitDelay} onChange={(e) => setSubmitDelay(Number(e.target.value))} disabled={running}>
+                <option value={0}>None</option>
+                {[1, 2, 3, 5, 8].map((n) => <option key={n} value={n}>{n}s</option>)}
               </select>
             </label>
             {running
