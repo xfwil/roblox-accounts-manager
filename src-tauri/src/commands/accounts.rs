@@ -204,9 +204,12 @@ pub async fn refresh_account(id: String, state: State<'_, AppState>) -> AppResul
         account.description = details.description;
     }
     // Refresh succeeded → the cookie is alive and the account is in good
-    // standing; clear any stale problem markers.
+    // standing; clear any stale problem markers. Face-lock is only a login-time
+    // gate marker — a clean authenticated refresh means it's been unlocked, so
+    // drop it too (a future locked login would re-flag it).
     account.fields.remove("cookie_dead");
     account.fields.remove("moderated");
+    account.fields.remove("facelock");
 
     let view = account.to_view();
     store.update_account(account)?;
