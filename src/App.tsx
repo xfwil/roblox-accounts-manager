@@ -160,9 +160,10 @@ function App() {
         <div className="workspace-breadcrumb">Workspace <span>/</span> <strong>{view === 'multilogin' ? 'Multi-login' : selectedGroup === 'All' ? 'All accounts' : selectedGroup}</strong></div>
         <span className="workspace-summary"><i className="summary-dot" />{Array.from(presenceMap.values()).filter(p => p.presenceType > 0).length} online</span>
       </header>
-      {view === 'multilogin'
-        ? <main className="workspace-main"><MultiLoginPage onProgress={fetchAccounts} /></main>
-        : <main className="workspace-main">
+      {/* Kept mounted (hidden when inactive) so an in-progress bulk run, its
+          live cards and the export textarea survive switching tabs. */}
+      <main className="workspace-main" style={{ display: view === 'multilogin' ? undefined : 'none' }}><MultiLoginPage onProgress={fetchAccounts} /></main>
+      {view !== 'multilogin' && <main className="workspace-main">
       <section className="workspace-heading" aria-label="Account overview">
         <div><h1>{selectedGroup === 'All' ? 'Your accounts' : selectedGroup}</h1><p>A little organization. A lot more play.</p></div>
         <div className="heading-actions"><button className="btn btn-secondary" onClick={handleLogin}>Login with Roblox <Icon name="arrow" size={15} /></button><button className="btn btn-primary" onClick={() => setIsAddDialogOpen(true)}><Icon name="plus" size={16} />Add account</button></div>
