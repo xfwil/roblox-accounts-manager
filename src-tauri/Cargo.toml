@@ -67,9 +67,11 @@ sysinfo = "0.33"
 # Regex (lightweight, no-std compatible)
 regex-lite = "0.1"
 
+# base64 — bulk-login window thumbnails + proxy Basic-auth header
+base64 = "0.22"
+
 # Windows API (multi-Roblox mutex + bulk-login window thumbnail capture)
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = ">=0.59, <=0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_Security"] }
 windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_Storage_Xps"] }
 png = "0.17"
-base64 = "0.22"

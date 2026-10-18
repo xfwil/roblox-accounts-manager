@@ -633,7 +633,7 @@ fn build_cookie_handler(
 // ===================== Bulk login =====================
 
 /// A single credential for bulk login. Used in-memory only — never written to disk.
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct Credential {
     pub username: String,
     pub password: String,
@@ -781,7 +781,151 @@ fn emit_progress(app: &AppHandle, index: usize, username: &str, state: &str, mes
 /// giving up and moving on.
 const MANUAL_SOLVE_TIMEOUT_SECS: u64 = 300;
 
-type BulkQueue = Arc<Mutex<VecDeque<(usize, Credential)>>>;
+type BulkQueue = Arc<Mutex<VecDeque<(usize, Credential, usize)>>>;
+
+/// How long a window may sit on a blank / un-loaded login page (proxy never
+/// connected) before we give up on that proxy and rotate to the next one.
+/// Only armed when the account is actually behind a proxy.
+/// ponytail: time heuristic, not a load-failure event — a genuinely-slow
+/// proxy taking >60s to show the login page gets rotated too.
+const STUCK_PROXY_TIMEOUT_SECS: u64 = 60;
+
+/// A proxy line parsed into its address and optional Basic-auth blob.
+struct ProxySpec {
+    host_port: String,
+    auth_b64: Option<String>,
+}
+
+/// Parse one proxy line. Accepts `host:port`, `user:pass@host:port`,
+/// `host:port:user:pass`, with an optional `http(s)://` scheme. SOCKS is
+/// unsupported (returns None). None also for blank/garbage lines.
+fn parse_proxy(line: &str) -> Option<ProxySpec> {
+    let line = line.trim();
+    if line.is_empty() {
+        return None;
+    }
+    let line = match line.split_once("://") {
+        Some((scheme, rest)) => {
+            if scheme.eq_ignore_ascii_case("socks5") || scheme.eq_ignore_ascii_case("socks4") {
+                return None; // ponytail: SOCKS skipped — different protocol, add if asked
+            }
+            rest
+        }
+        None => line,
+    };
+    let (host_port, creds) = if let Some((creds, hp)) = line.split_once('@') {
+        (hp.to_string(), Some(creds.to_string()))
+    } else {
+        let parts: Vec<&str> = line.split(':').collect();
+        match parts.len() {
+            2 => (line.to_string(), None),
+            4 => (
+                format!("{}:{}", parts[0], parts[1]),
+                Some(format!("{}:{}", parts[2], parts[3])),
+            ),
+            _ => return None,
+        }
+    };
+    if host_port.split(':').count() != 2 {
+        return None;
+    }
+    let auth_b64 = creds.map(|c| {
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD.encode(c.as_bytes())
+    });
+    Some(ProxySpec { host_port, auth_b64 })
+}
+
+/// Resolve each proxy line to a `--proxy-server` value. A no-auth proxy maps
+/// straight to `http://host:port`. An authed proxy — WebView2's flag can't
+/// carry credentials — maps to a local relay `http://127.0.0.1:<port>` that
+/// forwards to it with the `Proxy-Authorization` header injected. Unparseable
+/// lines become `None` (that account connects directly).
+async fn resolve_proxies(lines: Vec<String>) -> Vec<Option<String>> {
+    let mut out = Vec::with_capacity(lines.len());
+    for line in lines {
+        match parse_proxy(&line) {
+            None => out.push(None),
+            Some(ProxySpec { host_port, auth_b64: None }) => {
+                out.push(Some(format!("http://{}", host_port)));
+            }
+            Some(ProxySpec { host_port, auth_b64: Some(auth) }) => {
+                match tokio::net::TcpListener::bind("127.0.0.1:0").await {
+                    Ok(listener) => {
+                        let port = listener.local_addr().map(|a| a.port()).unwrap_or(0);
+                        tauri::async_runtime::spawn(run_auth_proxy_relay(listener, host_port, auth));
+                        out.push(Some(format!("http://127.0.0.1:{}", port)));
+                    }
+                    Err(_) => out.push(None),
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Local HTTP proxy that chains to an authenticated upstream proxy, adding the
+/// `Proxy-Authorization` header WebView2 can't supply on its own. Speaks both
+/// CONNECT (HTTPS, all that Roblox login needs) and plain HTTP by reading the
+/// request head, inserting the auth line, then byte-splicing the rest through.
+/// Accepts until the bulk run ends.
+async fn run_auth_proxy_relay(listener: tokio::net::TcpListener, upstream: String, auth_b64: String) {
+    loop {
+        let accepted = tokio::select! {
+            a = listener.accept() => a,
+            _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
+                if BULK_RUNNING.load(Ordering::SeqCst) { continue; }
+                break;
+            }
+        };
+        let client = match accepted {
+            Ok((c, _)) => c,
+            Err(_) => continue,
+        };
+        let upstream = upstream.clone();
+        let auth = auth_b64.clone();
+        tauri::async_runtime::spawn(async move {
+            let _ = relay_conn(client, upstream, auth).await;
+        });
+    }
+}
+
+async fn relay_conn(mut client: tokio::net::TcpStream, upstream: String, auth_b64: String) -> std::io::Result<()> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    // Read the request head (up to the blank line that ends the headers).
+    let mut buf: Vec<u8> = Vec::with_capacity(1024);
+    let mut tmp = [0u8; 1024];
+    while find_subslice(&buf, b"\r\n\r\n").is_none() {
+        let n = client.read(&mut tmp).await?;
+        if n == 0 {
+            return Ok(());
+        }
+        buf.extend_from_slice(&tmp[..n]);
+        if buf.len() > 32 * 1024 {
+            break; // runaway guard
+        }
+    }
+    let hdr_end = find_subslice(&buf, b"\r\n\r\n").map(|i| i + 4).unwrap_or(buf.len());
+    let line_end = find_subslice(&buf, b"\r\n").map(|i| i + 2).unwrap_or(0);
+
+    // Request line, then our injected auth header, then the rest of the head.
+    let mut head: Vec<u8> = Vec::with_capacity(buf.len() + 64);
+    head.extend_from_slice(&buf[..line_end]);
+    head.extend_from_slice(format!("Proxy-Authorization: Basic {}\r\n", auth_b64).as_bytes());
+    head.extend_from_slice(&buf[line_end..hdr_end]);
+
+    let mut server = tokio::net::TcpStream::connect(&upstream).await?;
+    server.write_all(&head).await?;
+    if hdr_end < buf.len() {
+        server.write_all(&buf[hdr_end..]).await?; // any bytes already read past the head
+    }
+    tokio::io::copy_bidirectional(&mut client, &mut server).await?;
+    Ok(())
+}
+
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack.windows(needle.len()).position(|w| w == needle)
+}
 
 /// Start bulk login. Spawns up to `concurrency` (1..=4) login windows that
 /// auto-fill credentials. Captcha/face-lock/2sv is solved manually in the
@@ -793,6 +937,7 @@ pub async fn start_bulk_login(
     concurrency: usize,
     export_cookies: bool,
     gap_ms: u64,
+    proxies: Vec<String>,
     app: AppHandle,
 ) -> AppResult<()> {
     let total = credentials.len();
@@ -814,13 +959,19 @@ pub async fn start_bulk_login(
         .join("bulk-sessions");
     let _ = std::fs::remove_dir_all(&data_root); // fresh sessions every run
 
-    let queue: BulkQueue = Arc::new(Mutex::new(credentials.into_iter().enumerate().collect()));
+    // Map account i → proxies[i % len]; rotation retries walk further along the
+    // list. Authed proxies get a local auth-injecting relay (started here).
+    let proxies = Arc::new(resolve_proxies(proxies).await);
+
+    let queue: BulkQueue =
+        Arc::new(Mutex::new(credentials.into_iter().enumerate().map(|(i, c)| (i, c, 0usize)).collect()));
 
     for _ in 0..n {
         let app = app.clone();
         let queue = queue.clone();
         let data_root = data_root.clone();
-        tauri::async_runtime::spawn(run_bulk_slot(app, queue, data_root, export_cookies, gap_ms));
+        let proxies = proxies.clone();
+        tauri::async_runtime::spawn(run_bulk_slot(app, queue, data_root, export_cookies, gap_ms, proxies));
     }
 
     #[cfg(windows)]
@@ -884,7 +1035,7 @@ pub fn focus_bulk_window(index: usize, app: AppHandle) -> AppResult<()> {
 
 /// One worker slot: pulls accounts off the queue and logs them in one at a
 /// time, so at most `concurrency` windows are ever open.
-async fn run_bulk_slot(app: AppHandle, queue: BulkQueue, data_root: PathBuf, export_cookies: bool, gap_ms: u64) {
+async fn run_bulk_slot(app: AppHandle, queue: BulkQueue, data_root: PathBuf, export_cookies: bool, gap_ms: u64, proxies: Arc<Vec<Option<String>>>) {
     let ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
     loop {
@@ -893,9 +1044,20 @@ async fn run_bulk_slot(app: AppHandle, queue: BulkQueue, data_root: PathBuf, exp
         }
         // Drop the lock before any await (std Mutex guard isn't held across await).
         let next = { queue.lock().ok().and_then(|mut q| q.pop_front()) };
-        let (index, cred) = match next {
+        let (index, cred, attempt) = match next {
             Some(x) => x,
             None => break,
+        };
+
+        // This attempt's proxy (if any): assigned one, rotated by attempt.
+        let proxy_arg = if proxies.is_empty() {
+            None
+        } else {
+            proxies[(index + attempt) % proxies.len()].clone()
+        };
+        let browser_args = match &proxy_arg {
+            Some(p) => format!("{} --proxy-server={}", NO_THROTTLE_ARGS, p),
+            None => NO_THROTTLE_ARGS.to_string(),
         };
 
         let label = format!("bulk-login-{}", index);
@@ -917,7 +1079,7 @@ async fn run_bulk_slot(app: AppHandle, queue: BulkQueue, data_root: PathBuf, exp
         .resizable(true)
         .user_agent(ua)
         .data_directory(dir)
-        .additional_browser_args(NO_THROTTLE_ARGS)
+        .additional_browser_args(&browser_args)
         .initialization_script(&bulk_init_script(&cred.username, &cred.password))
         .build();
 
@@ -1015,6 +1177,24 @@ async fn run_bulk_slot(app: AppHandle, queue: BulkQueue, data_root: PathBuf, exp
                 let _ = w.close();
                 break;
             }
+
+            // Dead/stuck proxy: never got past the blank/login page. Rotate to
+            // the next proxy and retry, up to the number of proxies we have.
+            if proxy_arg.is_some()
+                && matches!(code.as_str(), "" | "login" | "loading")
+                && started.elapsed().as_secs() > STUCK_PROXY_TIMEOUT_SECS
+            {
+                let _ = w.close();
+                if attempt + 1 < proxies.len() {
+                    emit_progress(&app, index, &cred.username, "queued", "Proxy stuck — retrying with next proxy…");
+                    if let Ok(mut q) = queue.lock() {
+                        q.push_back((index, cred.clone(), attempt + 1));
+                    }
+                } else {
+                    emit_progress(&app, index, &cred.username, "error", "All proxies failed or timed out");
+                }
+                break;
+            }
         }
 
         // Let WebView2 release the data-dir lock before the next account.
@@ -1031,6 +1211,40 @@ async fn run_bulk_slot(app: AppHandle, queue: BulkQueue, data_root: PathBuf, exp
     if BULK_ACTIVE_SLOTS.fetch_sub(1, Ordering::SeqCst) == 1 {
         BULK_RUNNING.store(false, Ordering::SeqCst);
         let _ = app.emit_to("main", "bulk-login-finished", ());
+    }
+}
+
+#[cfg(test)]
+mod proxy_tests {
+    use super::parse_proxy;
+
+    // base64("u:p") = "dTpw"
+    #[test]
+    fn parses_every_accepted_shape() {
+        let plain = parse_proxy("1.2.3.4:8080").unwrap();
+        assert_eq!(plain.host_port, "1.2.3.4:8080");
+        assert!(plain.auth_b64.is_none());
+
+        let at = parse_proxy("u:p@1.2.3.4:8080").unwrap();
+        assert_eq!(at.host_port, "1.2.3.4:8080");
+        assert_eq!(at.auth_b64.as_deref(), Some("dTpw"));
+
+        let colon = parse_proxy("1.2.3.4:8080:u:p").unwrap();
+        assert_eq!(colon.host_port, "1.2.3.4:8080");
+        assert_eq!(colon.auth_b64.as_deref(), Some("dTpw"));
+
+        let scheme = parse_proxy("http://u:p@1.2.3.4:8080").unwrap();
+        assert_eq!(scheme.host_port, "1.2.3.4:8080");
+        assert_eq!(scheme.auth_b64.as_deref(), Some("dTpw"));
+    }
+
+    #[test]
+    fn rejects_blank_socks_and_garbage() {
+        assert!(parse_proxy("").is_none());
+        assert!(parse_proxy("   ").is_none());
+        assert!(parse_proxy("socks5://1.2.3.4:1080").is_none());
+        assert!(parse_proxy("justhost").is_none()); // no port
+        assert!(parse_proxy("a:b:c").is_none()); // 3 parts — ambiguous
     }
 }
 
