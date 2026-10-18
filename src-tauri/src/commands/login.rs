@@ -60,7 +60,11 @@ const DETECT_JS: &str = r#"
     if (/\/home/.test(href) && !/\/login/.test(href)) return ['success', 'Signed in'];
     if (document.querySelector('iframe[src*="arkoselabs"],iframe[src*="funcaptcha"],iframe[title*="challenge" i],[id^="arkose"],#arkose-game,#FunCaptcha')) return ['captcha', 'Solve the challenge to continue'];
     var txt = document.body ? document.body.innerText : '';
-    if (/account\s+(?:has been\s+)?locked|suspicious activity|confirm(?:ing)?\s+that\s+you['’]?re\s+a?\s*human|verify\s+(?:that\s+)?you['’]?re\s+a?\s*human|akun.{0,20}terkunci|aktivitas.{0,10}mencurigakan|(?:k|meng)onfirmasi.{0,30}manusia|verifikasi.{0,20}manusia|mem?buka\s*kunci\s*akun/i.test(txt)) return ['locked', 'Account locked — confirm you are human'];
+    // Only an explicit "account locked" screen is a face-lock. Generic
+    // human-check text ("verify you're a human", press-and-hold) is the routine
+    // login captcha — flagging it as locked marked normal accounts Face-lock.
+    if (/account\s+(?:has been\s+|is\s+)?locked|akun.{0,20}terkunci|mem?buka\s*kunci\s*akun/i.test(txt)) return ['locked', 'Account locked — confirm you are human'];
+    if (/suspicious activity|confirm(?:ing)?\s+that\s+you['’]?re\s+a?\s*human|verify\s+(?:that\s+)?you['’]?re\s+a?\s*human|aktivitas.{0,10}mencurigakan|(?:k|meng)onfirmasi.{0,30}manusia|verifikasi.{0,20}manusia/i.test(txt)) return ['captcha', 'Solve the challenge to continue'];
     if (/two[- ]step|2-step|verification code|security code|authenticator/i.test(txt) || /2sv|two-step/i.test(href)) return ['twostep', 'Enter your verification code'];
     if (/incorrect username or password|wasn['’]?t quite right|didn['’]?t match|invalid password/i.test(txt)) return ['error', 'Incorrect username or password'];
     if (document.querySelector('#login-username, input#login-username, form#login-form')) return ['login', 'Waiting for login'];
