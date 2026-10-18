@@ -46,6 +46,7 @@ function parseCredentials(text: string): Credential[] {
 
 export function MultiLoginPage({ onProgress }: { onProgress: () => void }) {
   const [text, setText] = useState('');
+  const [proxyText, setProxyText] = useState('');
   const [concurrency, setConcurrency] = useState(2);
   const [submitDelay, setSubmitDelay] = useState(0); // seconds each slot waits before picking up the next account (0 = none)
   const [running, setRunning] = useState(false);
@@ -96,8 +97,9 @@ export function MultiLoginPage({ onProgress }: { onProgress: () => void }) {
     setExports({});
     setCopied(false);
     setRunning(true);
+    const proxies = proxyText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
     try {
-      await startBulkLogin(parsed, concurrency, exportCookies, submitDelay * 1000);
+      await startBulkLogin(parsed, concurrency, exportCookies, submitDelay * 1000, proxies);
     } catch (err) {
       setRunning(false);
       setRows((prev) => ({ ...prev, [-1]: { username: '—', state: 'error', message: String(err) } }));
@@ -135,6 +137,18 @@ export function MultiLoginPage({ onProgress }: { onProgress: () => void }) {
               placeholder={'username:password\nusername,password\nusername | password'}
               spellCheck={false}
               disabled={running}
+            />
+          </label>
+          <label className="ml-field">
+            <span>Proxies <small>· optional · 1 per line</small></span>
+            <textarea
+              className="ml-proxy"
+              value={proxyText}
+              onChange={(e) => setProxyText(e.target.value)}
+              placeholder={'host:port\nuser:pass@host:port\nhost:port:user:pass'}
+              spellCheck={false}
+              disabled={running}
+              rows={3}
             />
           </label>
           <div className="ml-controls">
