@@ -7,7 +7,6 @@ mod presence;
 mod presets;
 mod settings;
 mod utilities;
-mod watcher;
 
 pub use accounts::*;
 pub use game::*;
@@ -18,4 +17,3 @@ pub use presence::*;
 pub use presets::*;
 pub use settings::*;
 pub use utilities::*;
-pub use watcher::*;

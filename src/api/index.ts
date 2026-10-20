@@ -36,15 +36,6 @@ export {
 } from './importExport';
 
 export {
-  trackProcess,
-  untrackProcess,
-  getProcessStatus,
-  cleanupDeadProcesses,
-  getRunningCount,
-  findRobloxProcesses,
-} from './watcher';
-
-export {
   getSettings,
   saveSettings,
   getThemes,

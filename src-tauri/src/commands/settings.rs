@@ -17,10 +17,6 @@ pub struct AppSettings {
     pub theme: String,
     /// Auto-refresh interval in minutes (0 = disabled)
     pub auto_refresh_minutes: u32,
-    /// Enable watcher (auto-detect dead processes)
-    pub watcher_enabled: bool,
-    /// Watcher poll interval in seconds
-    pub watcher_interval_seconds: u32,
 }
 
 impl Default for AppSettings {
@@ -30,8 +26,6 @@ impl Default for AppSettings {
             nexus_port: 7964,
             theme: "dark".into(),
             auto_refresh_minutes: 0,
-            watcher_enabled: true,
-            watcher_interval_seconds: 30,
         }
     }
 }

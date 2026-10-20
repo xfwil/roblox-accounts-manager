@@ -133,15 +133,6 @@ input[type='checkbox'], input[type='radio'] { accent-color: var(--accent-primary
 .account-list-empty > p:first-of-type { font-size: 16px; font-weight: 600; color: var(--text-primary); }
 .account-list-empty > p { font-size: 12px; }
 .library-footer { padding: 10px 18px; display: flex; justify-content: space-between; gap: 12px; font-size: 10px; color: var(--text-muted); border-top: 1px solid var(--border-color); background: var(--bg-secondary); flex-shrink: 0; }
-.watcher-panel-container { position: relative; inset: auto; flex-shrink: 0; box-shadow: none; border-top: 1px solid var(--border-color); }
-.watcher-panel-container.expanded { height: min(300px, 40dvh); }
-.watcher-header { padding: 0 30px; background: var(--bg-panel); }
-.watcher-title { font-size: 12px; }
-.watcher-badge { background: var(--surface-raised); color: var(--text-secondary); font-size: 10px; border-radius: 5px; border: 1px solid var(--border-color); }
-.watcher-badge.active { background: color-mix(in srgb, var(--success) 12%, transparent); color: var(--success); }
-.watcher-content { min-height: 0; padding: 12px 30px 18px; }
-.watcher-table th { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
-.watcher-table td { font-size: 12px; }
 .status-dot.running { box-shadow: none; }
 .dialog-header, .group-dialog .dialog-header { padding: 20px 24px; flex-shrink: 0; }
 .dialog-header h2, .dialog-header h3 { font-size: 18px; letter-spacing: -.02em; font-weight: 650; }
@@ -192,12 +183,6 @@ input[type='checkbox'], input[type='radio'] { accent-color: var(--accent-primary
   .account-workspace { flex: 1 0 280px; }
   .list-caption { padding: 12px; font-size: 12px; }
   .list-caption span + span { max-width: 145px; text-align: right; }
-  .watcher-header { padding: 0 14px; }
-  .watcher-controls { gap: 4px; }
-  .watcher-actions { gap: 0; }
-  .watcher-title { gap: 6px; font-size: 11px; }
-  .watcher-content { padding: 12px; }
-  .watcher-table { min-width: 550px; }
   .dialog-header, .group-dialog .dialog-header { padding: 16px; }
   .dialog-body, .group-dialog .dialog-body { padding: 16px; }
   .dialog > .dialog-footer, .dialog-content > .dialog-footer { padding: 14px 16px; }
