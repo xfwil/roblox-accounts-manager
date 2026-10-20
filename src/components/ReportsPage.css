@@ -1,0 +1,37 @@
+.reports-page { display: flex; flex-direction: column; gap: 16px; height: 100%; min-height: 0; }
+
+.reports-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.reports-heading h1 { margin: 0 0 4px; font-size: 24px; color: var(--text-primary); }
+.reports-heading p { margin: 0; color: var(--text-secondary); font-size: 13px; max-width: 70ch; }
+.reports-group { width: auto; min-width: 160px; }
+
+.reports-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.report-tile {
+  display: flex; flex-direction: column; gap: 6px;
+  background: var(--bg-panel); border: 1px solid var(--border-color); border-radius: 14px; padding: 14px 16px;
+}
+.report-label { font-size: 12px; color: var(--text-secondary); }
+.report-tile strong { font-size: 28px; line-height: 1; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.report-tile small { font-size: 12px; color: var(--text-muted); }
+
+.reports-table-card {
+  flex: 1; min-height: 0; display: flex; flex-direction: column;
+  background: var(--bg-panel); border: 1px solid var(--border-color); border-radius: 14px;
+}
+.reports-table-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 10px 16px; border-bottom: 1px solid var(--border-color); }
+.reports-table-card h2 { margin: 0; font-size: 14px; color: var(--text-primary); }
+.reports-actions { display: flex; gap: 6px; }
+.reports-actions .btn { display: inline-flex; align-items: center; gap: 6px; }
+.reports-row-actions { white-space: nowrap; text-align: right; }
+.reports-table-card h2 span { color: var(--text-muted); font-weight: 500; margin-left: 4px; }
+.reports-empty { margin: 0; padding: 24px 16px; color: var(--text-muted); font-size: 13px; }
+.reports-table-scroll { flex: 1; min-height: 0; overflow: auto; }
+.reports-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.reports-table th {
+  position: sticky; top: 0; background: var(--bg-panel); text-align: left;
+  padding: 8px 16px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--text-muted); border-bottom: 1px solid var(--border-color);
+}
+.reports-table td { padding: 10px 16px; border-bottom: 1px solid var(--border-color); color: var(--text-primary); }
+.reports-table td small { color: var(--text-muted); }
+.reports-table .num { text-align: right; font-variant-numeric: tabular-nums; }

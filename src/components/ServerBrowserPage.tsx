@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { getServers, getGameDetails, joinGame } from '../api/game';
 import type { GameServer, GameDetails } from '../types/game';
 import { parsePlaceId } from './JoinGameBar';
+import { useSort } from '../hooks/useSort';
 import './ServerBrowserPage.css';
 
 interface ServerBrowserPageProps {
@@ -27,6 +28,18 @@ export function ServerBrowserPage({ selectedAccountIds }: ServerBrowserPageProps
   const [loadedPlaceId, setLoadedPlaceId] = useState<number | null>(null);
 
   const count = selectedAccountIds.length;
+  // 'default' keeps Roblox's order until a column is clicked
+  const { sort, th } = useSort<'default' | 'players' | 'free' | 'ping' | 'fps' | 'job'>('default');
+  const sortedServers = sort(servers, (s, k) => {
+    switch (k) {
+      case 'players': return s.playing;
+      case 'free': return s.maxPlayers - s.playing;
+      case 'ping': return s.ping;
+      case 'fps': return s.fps;
+      case 'job': return s.id;
+      default: return null;
+    }
+  });
 
   const loadInitial = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -154,15 +167,16 @@ export function ServerBrowserPage({ selectedAccountIds }: ServerBrowserPageProps
             <table className="server-table">
               <thead>
                 <tr>
-                  <th className="col-players">Players</th>
-                  <th className="col-ping">Ping</th>
-                  <th className="col-fps">FPS</th>
-                  <th className="col-job">Job ID</th>
+                  {th('players', 'Players', 'col-players')}
+                  {th('free', 'Free slots', 'col-free')}
+                  {th('ping', 'Ping', 'col-ping')}
+                  {th('fps', 'FPS', 'col-fps')}
+                  {th('job', 'Job ID', 'col-job')}
                   <th className="col-action">Action</th>
                 </tr>
               </thead>
               <tbody>
-                {servers.map(server => (
+                {sortedServers.map(server => (
                   <tr key={server.id}>
                     <td>
                       <div className="player-count">
@@ -173,6 +187,7 @@ export function ServerBrowserPage({ selectedAccountIds }: ServerBrowserPageProps
                         <div className="player-bar-fill" style={{ width: `${Math.min(100, (server.playing / server.maxPlayers) * 100)}%` }} />
                       </div>
                     </td>
+                    <td>{server.maxPlayers - server.playing}</td>
                     <td>
                       <span className={`ping-badge ${server.ping === null ? 'ping-ok' : server.ping < 80 ? 'ping-good' : server.ping < 150 ? 'ping-ok' : 'ping-bad'}`}>
                         {server.ping === null ? 'N/A' : `${server.ping} ms`}

@@ -8,6 +8,7 @@ import { JoinGameBar } from './components/JoinGameBar';
 import { AddAccountDialog } from './components/AddAccountDialog';
 import { JoinGameDialog } from './components/JoinGameDialog';
 import { ServerBrowserPage } from './components/ServerBrowserPage';
+import { ReportsPage } from './components/ReportsPage';
 import { AccountUtilsDialog } from './components/AccountUtilsDialog';
 import { ImportExportDialog } from './components/ImportExportDialog';
 import { SettingsDialog } from './components/SettingsDialog';
@@ -38,7 +39,7 @@ function App() {
   const [isJoinGameOpen, setIsJoinGameOpen] = useState(false);
   const [isAccountUtilsOpen, setIsAccountUtilsOpen] = useState(false);
   const [isImportExportOpen, setIsImportExportOpen] = useState(false);
-  const [view, setView] = useState<'accounts' | 'multilogin' | 'servers'>('accounts');
+  const [view, setView] = useState<'accounts' | 'multilogin' | 'servers' | 'reports'>('reports');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([]);
@@ -92,6 +93,17 @@ function App() {
     };
   }, [fetchAccounts]);
 
+  // Open-browser re-login: backend saved (or refused) the window's new cookie
+  useEffect(() => {
+    const unlisten = listen<{ username: string; saved: boolean; message: string }>('browser-cookie', (event) => {
+      setNotice(event.payload.message);
+      if (event.payload.saved) fetchAccounts();
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [fetchAccounts]);
+
   // Surface login page state (captcha / locked / 2sv / wrong password) detected
   // inside the Roblox login window, so the user knows why it's stuck.
   useEffect(() => {
@@ -134,11 +146,12 @@ function App() {
     setIsAccountUtilsOpen(true);
   };
 
-  const handleCopyCookie = async (accountId: string) => {
+  const handleCopyCookie = async (accountIds: string[]) => {
     try {
-      const cookie = await getAccountCookie(accountId);
-      await navigator.clipboard.writeText(cookie);
-      setNotice('Cookie copied. Keep it private and never share it.');
+      // One cookie per line, in list order
+      const cookies = await Promise.all(accountIds.map(getAccountCookie));
+      await navigator.clipboard.writeText(cookies.join('\n'));
+      setNotice(`${cookies.length > 1 ? `${cookies.length} cookies` : 'Cookie'} copied. Keep it private and never share it.`);
     } catch (err) {
       console.error('Failed to copy cookie', err);
       setNotice('Unable to copy cookie. Please try again.');
@@ -152,16 +165,17 @@ function App() {
 
   return (
     <div className="app-container">
-      <WorkspaceNav groups={groups} selectedGroup={selectedGroup} onGroup={(g) => { setSelectedGroup(g); setView('accounts'); }} count={accounts.length} onServers={() => setView('servers')} onTransfer={() => setIsImportExportOpen(true)} onSettings={() => setIsSettingsOpen(true)} onMultiLogin={() => setView('multilogin')} activeView={view} />
+      <WorkspaceNav groups={groups} selectedGroup={selectedGroup} onGroup={(g) => { setSelectedGroup(g); setView('accounts'); }} count={accounts.length} onServers={() => setView('servers')} onReports={() => setView('reports')} onTransfer={() => setIsImportExportOpen(true)} onSettings={() => setIsSettingsOpen(true)} onMultiLogin={() => setView('multilogin')} activeView={view} />
       <div className="workspace-shell">
       <header className="workspace-header">
-        <div className="workspace-breadcrumb">Workspace <span>/</span> <strong>{view === 'multilogin' ? 'Multi-login' : view === 'servers' ? 'Server browser' : selectedGroup === 'All' ? 'All accounts' : selectedGroup}</strong></div>
+        <div className="workspace-breadcrumb">Workspace <span>/</span> <strong>{view === 'multilogin' ? 'Multi-login' : view === 'servers' ? 'Server browser' : view === 'reports' ? 'Reports' : selectedGroup === 'All' ? 'All accounts' : selectedGroup}</strong></div>
         <span className="workspace-summary"><i className="summary-dot" />{Array.from(presenceMap.values()).filter(p => p.presenceType > 0).length} online</span>
       </header>
       {/* Kept mounted (hidden when inactive) so an in-progress bulk run, its
           live cards and the export textarea survive switching tabs. */}
       <main className="workspace-main" style={{ display: view === 'multilogin' ? undefined : 'none' }}><MultiLoginPage onProgress={fetchAccounts} /></main>
       <main className="workspace-main" style={{ display: view === 'servers' ? undefined : 'none' }}><ServerBrowserPage selectedAccountIds={selectedAccountIds} /></main>
+      {view === 'reports' && <main className="workspace-main"><ReportsPage accounts={accounts} onRefresh={refreshAll} onCopyCookies={handleCopyCookie} refreshing={accountsLoading} /></main>}
       {/* Hidden, not unmounted, so the account selection survives visiting the server browser */}
       <main className="workspace-main" style={{ display: view === 'accounts' ? undefined : 'none' }}>
       <section className="workspace-heading" aria-label="Account overview">
@@ -170,7 +184,7 @@ function App() {
       </section>
       <div className="workspace-columns">
       <section className="account-workspace" aria-label="Managed accounts">
-      <div className="library-controls"><label className="library-search"><Icon name="search" size={17} /><input placeholder="Find an account..." aria-label="Search accounts" value={searchQuery} onChange={event => setSearchQuery(event.target.value)} /></label><button className="btn btn-ghost" onClick={refreshAll} disabled={accountsLoading}><span className={accountsLoading ? 'spin' : ''}><Icon name="refresh" size={16} /></span>Refresh</button></div>
+      <div className="library-controls"><label className="library-search"><Icon name="search" size={17} /><input placeholder="Find an account..." aria-label="Search accounts" value={searchQuery} onChange={event => setSearchQuery(event.target.value)} /></label><button className="btn btn-ghost" onClick={() => refreshAll()} disabled={accountsLoading}><span className={accountsLoading ? 'spin' : ''}><Icon name="refresh" size={16} /></span>Refresh</button></div>
       <select className="input-field compact-group-filter" aria-label="Filter accounts by group" value={selectedGroup} onChange={event => setSelectedGroup(event.target.value)}><option value="All">All groups</option>{groups.map(group => <option key={group} value={group}>{group}</option>)}</select>
       {accountsError && accounts.length > 0 && <div className="workspace-error" role="alert">{accountsError}</div>}
 

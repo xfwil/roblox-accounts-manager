@@ -188,6 +188,15 @@ impl AccountStore {
             } else {
                 acc.fields.remove(key).is_some()
             };
+            // History: count each time an account *enters* a problem state, so
+            // the record survives the flag being cleared by a later good refresh.
+            if on && changed {
+                let n = acc.fields.get(&format!("{key}_count"))
+                    .and_then(|v| v.parse::<u32>().ok())
+                    .unwrap_or(0);
+                acc.fields.insert(format!("{key}_count"), (n + 1).to_string());
+                acc.fields.insert(format!("{key}_last"), chrono::Utc::now().to_rfc3339());
+            }
             if changed {
                 self.save()?;
             }

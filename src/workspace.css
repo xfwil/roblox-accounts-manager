@@ -205,3 +205,4 @@ input[type='checkbox'], input[type='radio'] { accent-color: var(--accent-primary
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
 }
+.status-history { display: block; margin-top: 2px; font-size: 10px; color: var(--text-muted); white-space: nowrap; }
