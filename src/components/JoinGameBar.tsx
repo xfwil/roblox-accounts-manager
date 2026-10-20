@@ -1,6 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { joinGame, resolveShareLink, resolvePrivateServer } from '../api/game';
-import { trackProcess } from '../api/watcher';
 import { useRecentHistory } from '../hooks/useRecentHistory';
 import { usePresets } from '../hooks/usePresets';
 import './JoinGameBar.css';
@@ -15,17 +14,40 @@ interface JoinGameBarProps {
  * - Plain number: 126884695634066
  * - Game URL: https://www.roblox.com/games/126884695634066/...
  */
-function parsePlaceId(input: string, loose = true): number | null {
+function toUrl(input: string): URL | null {
+  try {
+    return new URL(input.includes('://') ? input : `https://${input}`);
+  } catch {
+    return null;
+  }
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Public server (Job ID) from: a bare UUID, or any link carrying
+ * gameInstanceId (roblox.com/games/start?... or roblox://experiences/start?...).
+ */
+function parseJobId(input: string): string | null {
+  const trimmed = input.trim();
+  if (UUID_RE.test(trimmed)) return trimmed;
+  const id = toUrl(trimmed)?.searchParams.get('gameInstanceId');
+  return id && UUID_RE.test(id) ? id : null;
+}
+
+export function parsePlaceId(input: string, loose = true): number | null {
   const trimmed = input.trim();
   if (!trimmed) return null;
 
   if (/^\d+$/.test(trimmed)) return parseInt(trimmed, 10);
 
-  try {
-    const url = new URL(trimmed.startsWith('http') ? trimmed : `https://${trimmed}`);
+  const url = toUrl(trimmed);
+  if (url) {
     const match = url.pathname.match(/\/games\/(\d+)/);
     if (match) return parseInt(match[1], 10);
-  } catch { /* not a URL */ }
+    const qp = url.searchParams.get('placeId');
+    if (qp && /^\d+$/.test(qp)) return parseInt(qp, 10);
+  }
 
   // Loose mode only for the Place ID field; PS/share codes often contain digit runs that are not place IDs
   if (!loose) return null;
@@ -43,7 +65,7 @@ function parsePlaceId(input: string, loose = true): number | null {
  */
 function parseLinkCode(input: string): string | null {
   const trimmed = input.trim();
-  if (!trimmed) return null;
+  if (!trimmed || parseJobId(trimmed)) return null;
 
   try {
     const url = new URL(trimmed.startsWith('http') ? trimmed : `https://${trimmed}`);
@@ -67,6 +89,9 @@ function parseLinkCode(input: string): string | null {
 function shortenLabel(value: string): string {
   // If it's just a number, return as-is
   if (/^\d+$/.test(value.trim())) return value.trim();
+
+  const job = parseJobId(value);
+  if (job) return `Job: ${job.substring(0, 8)}…`;
 
   // Try to extract meaningful parts from URLs
   try {
@@ -204,6 +229,7 @@ export function JoinGameBar({ selectedAccountIds }: JoinGameBarProps) {
     try {
       let placeId = parsePlaceId(placeIdInput);
       let linkCode = parseLinkCode(psLinkInput);
+      const jobId = parseJobId(psLinkInput);
 
       // If Place ID field is empty, try to get it from PS link
       if (!placeId && psLinkInput.trim()) {
@@ -212,7 +238,7 @@ export function JoinGameBar({ selectedAccountIds }: JoinGameBarProps) {
       }
 
       // If still no Place ID and we have a share link, resolve it via backend
-      if (!placeId && psLinkInput.trim()) {
+      if (!placeId && psLinkInput.trim() && !jobId) {
         try {
           updateStatus({ type: 'info', message: 'Resolving share link...' });
           const [resolvedPlaceId, resolvedCode] = await resolveShareLink(psLinkInput.trim());
@@ -268,15 +294,14 @@ export function JoinGameBar({ selectedAccountIds }: JoinGameBarProps) {
             await new Promise(r => setTimeout(r, 1500));
           }
           updateStatus({ type: 'info', message: `Launching ${i + 1}/${selectedAccountIds.length}...` });
-          const pid = await joinGame(
+          await joinGame(
             accountId,
             placeId,
-            undefined, // jobId
+            jobId || undefined,
             undefined, // followUserId
             linkCode || undefined,
             undefined, // launchArgs
           );
-          trackProcess(pid, accountId, placeId).catch(console.error);
           successCount++;
         } catch (err) {
           console.error(`Failed to join game for ${accountId}:`, err);
@@ -363,6 +388,13 @@ export function JoinGameBar({ selectedAccountIds }: JoinGameBarProps) {
     setPresetView(null);
   };
 
+  const psJob = parseJobId(psLinkInput);
+  const psHint = psJob
+    ? `Public server · Job ${psJob.substring(0, 8)}`
+    : parseLinkCode(psLinkInput) || /roblox\.com\/share/i.test(psLinkInput)
+      ? 'Private server'
+      : null;
+
   return (
     <div className="join-game-bar">
       <div className="join-field">
@@ -407,13 +439,13 @@ export function JoinGameBar({ selectedAccountIds }: JoinGameBarProps) {
         </div>
       </div>
       <div className="join-field">
-        <label>Private Server Link</label>
+        <label>Server Link / Job ID</label>
         <div className="join-input-wrapper">
           <input
             ref={psInputRef}
             type="text"
             className="input-field join-input join-input-with-arrow"
-            placeholder="PS link (optional)"
+            placeholder="PS link, share link or Job ID (optional)"
             value={psLinkInput}
             onChange={e => setPsLinkInput(e.target.value)}
             onFocus={() => setShowPsHistory(true)}
@@ -446,6 +478,7 @@ export function JoinGameBar({ selectedAccountIds }: JoinGameBarProps) {
             inputRef={psInputRef}
           />
         </div>
+        {psHint && <span className="join-hint">{psHint}</span>}
       </div>
       <div className="preset-container" ref={presetRef}>
         <button
