@@ -325,18 +325,37 @@ fn spawn_login_state_poller(app: AppHandle, label: String, finalize: bool) {
     });
 }
 
+/// Close a window and wait until its label is free (closing is async on
+/// Windows; rebuilding too soon fails with "label already exists").
+async fn close_window_and_wait(app: &AppHandle, label: &str) {
+    let Some(existing) = app.get_webview_window(label) else { return };
+    let _ = existing.destroy();
+    for _ in 0..40 {
+        if app.get_webview_window(label).is_none() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    // Let WebView2 release the data directory lock.
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+}
+
 /// Open a WebView window to roblox.com/login, intercept the .ROBLOSECURITY cookie
 /// after successful login, then add the account automatically.
 #[tauri::command]
 pub async fn open_login_window(app: AppHandle) -> AppResult<()> {
-    // Close existing login window if any
-    if let Some(existing) = app.get_webview_window("roblox-login") {
-        let _ = existing.close();
-    }
+    close_window_and_wait(&app, "roblox-login").await;
 
     // Fresh session: a new window + cleared browsing data so no stale cookie
     // from a previous login leaks in. (open_browser is the opposite — it keeps
     // each account's session persistent.)
+    // Own data dir: WebView2 refuses (0x8007139F) to share the main window's
+    // folder with different browser args, and the failed window leaves its
+    // label behind ("already exists" on every later click).
+    let login_dir = app.path().app_data_dir()
+        .map_err(|e| AppError::Other(format!("Failed to get app data dir: {}", e)))?
+        .join("login-session");
+    let _ = std::fs::remove_dir_all(&login_dir);
     let _login_window = WebviewWindowBuilder::new(
         &app,
         "roblox-login",
@@ -347,6 +366,7 @@ pub async fn open_login_window(app: AppHandle) -> AppResult<()> {
     .center()
     .resizable(true)
     .additional_browser_args(NO_THROTTLE_ARGS)
+    .data_directory(login_dir)
     .initialization_script(DETECT_JS)
     .build()
     .map_err(|e| AppError::Other(format!("Failed to create login window: {}", e)))?;
@@ -487,11 +507,7 @@ pub async fn open_browser(
 
     // Close existing browser window for this account if any
     let window_label = format!("browser-{}", &account_id[..8]);
-    if let Some(existing) = app.get_webview_window(&window_label) {
-        let _ = existing.close();
-        // Brief pause so WebView2 releases the data directory lock
-        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-    }
+    close_window_and_wait(&app, &window_label).await;
 
     // Per-account isolated data directory — each account has its own cookie store
     let app_data_dir = app.path().app_data_dir()
