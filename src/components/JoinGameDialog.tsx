@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { joinGame } from '../api/game';
-import { trackProcess } from '../api/watcher';
 import './JoinGameDialog.css';
 import { Modal } from './Modal';
 
@@ -40,7 +39,7 @@ export function JoinGameDialog({ isOpen, onClose, accountId }: JoinGameDialogPro
     setSuccess(false);
 
     try {
-      const pid = await joinGame(
+      await joinGame(
         accountId,
         parsedPlaceId,
         jobId || undefined,
@@ -48,7 +47,6 @@ export function JoinGameDialog({ isOpen, onClose, accountId }: JoinGameDialogPro
         undefined,
         launchArgs || undefined
       );
-      trackProcess(pid, accountId, parsedPlaceId).catch(console.error);
       setSuccess(true);
       setTimeout(() => {
         onClose();

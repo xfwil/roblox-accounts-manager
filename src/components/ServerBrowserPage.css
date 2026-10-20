@@ -1,79 +1,28 @@
-.server-dialog {
-  max-width: 700px;
-  height: 80vh;
-  max-height: 700px;
-}
+.server-page { display: flex; flex-direction: column; gap: 16px; height: 100%; min-height: 0; }
 
-.server-dialog-body {
-  display: flex;
-  flex-direction: column;
-  padding: 0;
-  overflow: hidden;
-}
+.server-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.server-heading h1 { margin: 0 0 4px; font-size: 24px; color: var(--text-primary); }
+.server-heading p { margin: 0; color: var(--text-secondary); font-size: 13px; }
+.server-launching { font-size: 12px; font-weight: 500; color: var(--success); }
+.server-launching.empty { color: var(--text-muted); }
 
-.server-search-form {
-  padding: var(--spacing-lg);
-  border-bottom: 1px solid var(--border-color);
-  background-color: var(--bg-panel);
-}
-
-.search-input-group {
-  display: flex;
-  gap: var(--spacing-md);
-}
-
-.search-input-group .input-field {
-  flex: 1;
-}
+.server-search-form { display: flex; gap: var(--spacing-md); }
+.server-search-form .input-field { flex: 1; min-width: 0; }
+.server-status { font-size: 12px; color: var(--text-secondary); }
 
 .game-details-card {
+  display: flex; align-items: center; gap: var(--spacing-lg); flex-wrap: wrap;
   padding: var(--spacing-md) var(--spacing-lg);
-  background-color: var(--bg-dark);
-  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-panel); border: 1px solid var(--border-color); border-radius: 14px;
 }
-
-.game-info-primary {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-lg);
-  flex-wrap: wrap;
-}
-
-.game-info-primary h3 {
-  margin: 0;
-  font-size: 16px;
-  color: var(--text-primary);
-}
-
-.game-stat {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  color: var(--text-muted);
-  font-size: 13px;
-}
+.game-details-card h3 { margin: 0; font-size: 16px; color: var(--text-primary); }
+.game-stat { color: var(--text-muted); font-size: 13px; }
 
 .server-list-container {
-  flex: 1;
-  overflow-y: auto;
-  background-color: var(--bg-dark);
-  position: relative;
+  flex: 1; min-height: 0; overflow: auto;
+  background: var(--bg-panel); border: 1px solid var(--border-color); border-radius: 14px;
 }
-
-.server-list-loading {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  height: 200px;
-}
-
-.server-list-empty {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  height: 200px;
-  color: var(--text-muted);
-}
+.server-list-empty { display: flex; justify-content: center; align-items: center; height: 200px; color: var(--text-muted); }
 
 .server-table {
   width: 100%;
@@ -108,10 +57,9 @@
   background-color: var(--bg-hover);
 }
 
-.col-players { width: 40%; }
-.col-ping { width: 20%; }
-.col-fps { width: 20%; }
-.col-action { width: 20%; text-align: right; }
+.col-players { width: 35%; }
+.col-ping, .col-fps { width: 15%; }
+.col-action { text-align: right; }
 .server-table th.col-action { text-align: right; }
 
 .player-count {
@@ -167,8 +115,7 @@
   border-top: 1px solid var(--border-color);
 }
 
-/* Ensure alerts don't break layout in server browser */
-.server-dialog-body .alert-error {
-  margin: var(--spacing-md) var(--spacing-lg);
-  flex-shrink: 0;
-}
+.col-job { width: 1%; white-space: nowrap; }
+.job-id { font-size: 12px; color: var(--text-secondary); }
+.server-table td.col-action { white-space: nowrap; }
+.server-table td.col-action .btn + .btn { margin-left: 6px; }

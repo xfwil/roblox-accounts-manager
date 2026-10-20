@@ -139,31 +139,6 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                 />
               </div>
 
-              <div className="form-group checkbox-group">
-                <input
-                  type="checkbox"
-                  id="watcher_enabled"
-                  name="watcher_enabled"
-                  checked={settings.watcher_enabled}
-                  onChange={handleChange}
-                />
-                <label htmlFor="watcher_enabled">Enable Watcher / Process Monitor</label>
-              </div>
-
-              <div className="form-group">
-                <label htmlFor="watcher_interval_seconds">Watcher Interval (Seconds)</label>
-                <input
-                  type="number"
-                  id="watcher_interval_seconds"
-                  name="watcher_interval_seconds"
-                  className="input-field"
-                  value={settings.watcher_interval_seconds}
-                  onChange={handleChange}
-                  min={5}
-                  disabled={!settings.watcher_enabled}
-                />
-              </div>
-
               {error && <div className="error-message">{error}</div>}
               {success && <div className="success-message">{success}</div>}
             </form>

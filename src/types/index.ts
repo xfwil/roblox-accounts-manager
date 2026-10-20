@@ -7,7 +7,6 @@ export type {
   BirthdateResponse,
   ImportResult,
   ExportedAccount,
-  ProcessStatus,
   AppSettings,
   UserPresence,
   LegacyImportResult,

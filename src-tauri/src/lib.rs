@@ -8,7 +8,6 @@ mod nexus;
 mod roblox;
 mod state;
 mod storage;
-mod watcher;
 mod webapi;
 
 use commands::SettingsPath;
@@ -128,9 +127,6 @@ pub fn run() {
             let join_data_path = app_data_dir.join("join_data.json");
             app.manage(commands::JoinDataPath(join_data_path));
 
-            // Initialize watcher
-            let watcher_state = watcher::new_watcher();
-            app.manage(watcher_state);
 
             // Start Web API server if enabled
             if settings.api_port > 0 {
@@ -203,14 +199,6 @@ pub fn run() {
             commands::export_accounts,
             commands::get_account_cookie,
             commands::update_account_cookie,
-            // Watcher / Process management
-            commands::track_process,
-            commands::untrack_process,
-            commands::get_process_status,
-            commands::cleanup_dead_processes,
-            commands::get_running_count,
-            commands::find_roblox_processes,
-
             // Settings
             commands::get_settings,
             commands::save_settings,

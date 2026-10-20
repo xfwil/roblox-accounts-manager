@@ -59,22 +59,11 @@ export interface ExportedAccount {
 
 // Phase 3 types
 
-export interface ProcessStatus {
-  account_id: string;
-  pid: number;
-  place_id: number;
-  is_running: boolean;
-  started_at: string;
-  uptime_seconds: number;
-}
-
 export interface AppSettings {
   api_port: number;
   nexus_port: number;
   theme: string;
   auto_refresh_minutes: number;
-  watcher_enabled: boolean;
-  watcher_interval_seconds: number;
 }
 
 // Presence types

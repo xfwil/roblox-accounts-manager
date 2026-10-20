@@ -1,71 +1,61 @@
 import React, { useState } from 'react';
 import { getServers, getGameDetails, joinGame } from '../api/game';
-import { trackProcess } from '../api/watcher';
 import type { GameServer, GameDetails } from '../types/game';
-import './ServerListDialog.css';
-import { Modal } from './Modal';
+import { parsePlaceId } from './JoinGameBar';
+import './ServerBrowserPage.css';
 
-interface ServerListDialogProps {
-  isOpen: boolean;
-  onClose: () => void;
-  accountId: string | null; // Null if opened globally, required to actually join
+interface ServerBrowserPageProps {
+  selectedAccountIds: string[];
 }
 
-export function ServerListDialog({ isOpen, onClose, accountId }: ServerListDialogProps) {
+const errText = (err: unknown, fallback: string) =>
+  typeof err === 'string' ? err : err instanceof Error ? err.message : fallback;
+
+export function ServerBrowserPage({ selectedAccountIds }: ServerBrowserPageProps) {
   const [placeId, setPlaceId] = useState('');
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [joiningServerId, setJoiningServerId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [joinError, setJoinError] = useState<string | null>(null);
-  
+  const [status, setStatus] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
   const [gameDetails, setGameDetails] = useState<GameDetails | null>(null);
   const [servers, setServers] = useState<GameServer[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   // Place the current list belongs to; the input may be edited after loading
   const [loadedPlaceId, setLoadedPlaceId] = useState<number | null>(null);
 
-  if (!isOpen) return null;
+  const count = selectedAccountIds.length;
 
   const loadInitial = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    
-    if (!placeId) {
-      setError('Place ID is required');
-      return;
-    }
-
-    const parsedPlaceId = parseInt(placeId, 10);
-    if (isNaN(parsedPlaceId)) {
-      setError('Place ID must be a valid number');
+    e?.preventDefault();
+    const parsedPlaceId = parsePlaceId(placeId);
+    if (!parsedPlaceId) {
+      setError('Enter a Place ID or game URL');
       return;
     }
 
     setLoading(true);
     setError(null);
-    setJoinError(null);
+    setStatus(null);
     setServers([]);
     setNextCursor(null);
     setGameDetails(null);
     setLoadedPlaceId(null);
 
     try {
-      // Load details and servers in parallel
       const [detailsResult, serversResult] = await Promise.all([
         getGameDetails(parsedPlaceId).catch(() => null),
-        getServers(parsedPlaceId, undefined, 25)
+        getServers(parsedPlaceId, undefined, 25),
       ]);
-
-      if (detailsResult && detailsResult.length > 0) {
-        setGameDetails(detailsResult[0]);
-      }
-      
+      if (detailsResult && detailsResult.length > 0) setGameDetails(detailsResult[0]);
       setLoadedPlaceId(parsedPlaceId);
       setServers(serversResult[0]);
       setNextCursor(serversResult[1]);
     } catch (err: unknown) {
       console.error('Failed to load servers', err);
-      setError(typeof err === 'string' ? err : err instanceof Error ? err.message : 'Failed to load servers');
+      setError(errText(err, 'Failed to load servers'));
     } finally {
       setLoading(false);
     }
@@ -73,183 +63,154 @@ export function ServerListDialog({ isOpen, onClose, accountId }: ServerListDialo
 
   const loadMore = async () => {
     if (!nextCursor || !loadedPlaceId) return;
-
     setLoadingMore(true);
     try {
       const [newServers, newCursor] = await getServers(loadedPlaceId, nextCursor, 25);
-      
       setServers(prev => [...prev, ...newServers]);
       setNextCursor(newCursor);
     } catch (err: unknown) {
       console.error('Failed to load more servers', err);
-      setError(typeof err === 'string' ? err : err instanceof Error ? err.message : 'Failed to load more servers');
+      setError(errText(err, 'Failed to load more servers'));
     } finally {
       setLoadingMore(false);
     }
   };
 
+  // Same pacing as the launch panel: 1.5s between launches to avoid rate limits
   const handleJoin = async (jobId: string) => {
-    if (!accountId) {
-      setJoinError('You must select an account before joining a server.');
-      return;
-    }
-
-    if (!loadedPlaceId) return;
+    if (!loadedPlaceId || count === 0) return;
     setJoiningServerId(jobId);
-    setJoinError(null);
-    
+    setError(null);
+    let ok = 0;
+    let lastError = '';
+    for (let i = 0; i < count; i++) {
+      if (i > 0) await new Promise(r => setTimeout(r, 1500));
+      setStatus(`Launching ${i + 1}/${count}...`);
+      try {
+        await joinGame(selectedAccountIds[i], loadedPlaceId, jobId);
+        ok++;
+      } catch (err) {
+        console.error('Failed to join game', err);
+        lastError = errText(err, 'Failed to launch game');
+      }
+    }
+    setStatus(ok === count ? `Launched ${ok} instance${ok > 1 ? 's' : ''}` : null);
+    if (ok < count) setError(`${ok} ok, ${count - ok} failed: ${lastError}`);
+    setJoiningServerId(null);
+  };
+
+  const copyJobId = async (jobId: string) => {
     try {
-      const pid = await joinGame(accountId, loadedPlaceId, jobId);
-      trackProcess(pid, accountId, loadedPlaceId).catch(console.error);
-      // Wait a moment before clearing status so user sees it succeeded
-      setTimeout(() => {
-        setJoiningServerId(null);
-      }, 1000);
-    } catch (err: unknown) {
-      console.error('Failed to join game', err);
-      setJoinError(typeof err === 'string' ? err : err instanceof Error ? err.message : 'Failed to launch game');
-      setJoiningServerId(null);
+      await navigator.clipboard.writeText(jobId);
+      setCopiedId(jobId);
+      setTimeout(() => setCopiedId(prev => (prev === jobId ? null : prev)), 1500);
+    } catch {
+      setError('Unable to copy Job ID');
     }
   };
 
   return (
-    <Modal title="Server browser" description="Find an open spot. Choose the right instance for your session." onClose={onClose} className="server-dialog">
-
-        <div className="dialog-body server-dialog-body">
-          <form onSubmit={loadInitial} className="server-search-form">
-            <div className="search-input-group">
-              <input
-                type="text"
-                className="input-field"
-                placeholder="Enter Place ID (e.g. 1818)"
-                value={placeId}
-                onChange={e => setPlaceId(e.target.value)}
-                disabled={loading}
-                autoFocus
-              />
-              <button type="submit" className="btn btn-primary" disabled={loading || !placeId}>
-                {loading ? 'Loading...' : 'Load Servers'}
-              </button>
-            </div>
-          </form>
-
-          {error && (
-            <div className="alert-error">
-              {error}
-            </div>
-          )}
-
-          {joinError && (
-            <div className="alert-error">
-              {joinError}
-            </div>
-          )}
-
-          {gameDetails && (
-            <div className="game-details-card">
-              <div className="game-info-primary">
-                <h3>{gameDetails.name}</h3>
-                <span className="game-stat">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
-                    <circle cx="9" cy="7" r="4"></circle>
-                    <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
-                    <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
-                  </svg>
-                  {(gameDetails.playing || 0).toLocaleString()} playing
-                </span>
-                <span className="game-stat">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
-                  </svg>
-                  {(gameDetails.visits || 0).toLocaleString()} visits
-                </span>
-              </div>
-            </div>
-          )}
-
-          <div className="server-list-container">
-            {loading ? (
-              <div className="server-list-loading">
-                <svg className="spin" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2">
-                  <line x1="12" y1="2" x2="12" y2="6"></line>
-                  <line x1="12" y1="18" x2="12" y2="22"></line>
-                  <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line>
-                  <line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
-                  <line x1="2" y1="12" x2="6" y2="12"></line>
-                  <line x1="18" y1="12" x2="22" y2="12"></line>
-                  <line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line>
-                  <line x1="16.24" y1="4.93" x2="19.07" y2="7.76"></line>
-                </svg>
-              </div>
-            ) : servers.length > 0 ? (
-              <>
-                <table className="server-table">
-                  <thead>
-                    <tr>
-                      <th className="col-players">Players</th>
-                      <th className="col-ping">Ping</th>
-                      <th className="col-fps">FPS</th>
-                      <th className="col-action">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {servers.map((server) => (
-                      <tr key={server.id}>
-                        <td>
-                          <div className="player-count">
-                            <span className="current">{server.playing}</span>
-                            <span className="max">/ {server.maxPlayers}</span>
-                          </div>
-                          <div className="player-bar">
-                            <div 
-                              className="player-bar-fill" 
-                              style={{ width: `${Math.min(100, (server.playing / server.maxPlayers) * 100)}%` }}
-                            ></div>
-                          </div>
-                        </td>
-                        <td>
-                          <span className={`ping-badge ${server.ping === null ? 'ping-ok' : server.ping < 80 ? 'ping-good' : server.ping < 150 ? 'ping-ok' : 'ping-bad'}`}>
-                            {server.ping === null ? 'N/A' : `${server.ping} ms`}
-                          </span>
-                        </td>
-                        <td>{server.fps.toFixed(1)}</td>
-                        <td>
-                          <button 
-                            className="btn btn-secondary btn-sm" 
-                            onClick={() => handleJoin(server.id)}
-                            disabled={joiningServerId !== null || !accountId}
-                            title={!accountId ? "Select an account from the main list first to join" : "Join this server"}
-                          >
-                            {joiningServerId === server.id ? 'Joining...' : 'Join'}
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                
-                {nextCursor && (
-                  <div className="load-more-container">
-                    <button 
-                      className="btn btn-secondary" 
-                      onClick={loadMore}
-                      disabled={loadingMore}
-                    >
-                      {loadingMore ? 'Loading...' : 'Load More Servers'}
-                    </button>
-                  </div>
-                )}
-              </>
-            ) : (
-              !loading && !error && gameDetails && (
-                <div className="server-list-empty">
-                  No servers found.
-                </div>
-              )
-            )}
-          </div>
+    <div className="server-page">
+      <section className="server-heading">
+        <div>
+          <h1>Server browser</h1>
+          <p>Find an open spot and send your selected accounts into the same instance.</p>
         </div>
-    </Modal>
+        <span className={`server-launching ${count ? '' : 'empty'}`}>
+          {count ? `Joining with ${count} account${count > 1 ? 's' : ''}` : 'Select accounts in All accounts first'}
+        </span>
+      </section>
+
+      <form onSubmit={loadInitial} className="server-search-form">
+        <input
+          type="text"
+          className="input-field"
+          placeholder="Place ID or roblox.com/games/... URL"
+          value={placeId}
+          onChange={e => setPlaceId(e.target.value)}
+          disabled={loading}
+        />
+        <button type="submit" className="btn btn-primary" disabled={loading || !placeId.trim()}>
+          {loading ? 'Loading...' : 'Load servers'}
+        </button>
+      </form>
+
+      {error && <div className="alert-error">{error}</div>}
+      {status && <div className="server-status">{status}</div>}
+
+      {gameDetails && (
+        <div className="game-details-card">
+          <h3>{gameDetails.name}</h3>
+          <span className="game-stat">{(gameDetails.playing || 0).toLocaleString()} playing</span>
+          <span className="game-stat">{(gameDetails.visits || 0).toLocaleString()} visits</span>
+        </div>
+      )}
+
+      <div className="server-list-container">
+        {loading ? (
+          <div className="server-list-empty">Loading servers...</div>
+        ) : servers.length > 0 ? (
+          <>
+            <table className="server-table">
+              <thead>
+                <tr>
+                  <th className="col-players">Players</th>
+                  <th className="col-ping">Ping</th>
+                  <th className="col-fps">FPS</th>
+                  <th className="col-job">Job ID</th>
+                  <th className="col-action">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {servers.map(server => (
+                  <tr key={server.id}>
+                    <td>
+                      <div className="player-count">
+                        <span className="current">{server.playing}</span>
+                        <span className="max">/ {server.maxPlayers}</span>
+                      </div>
+                      <div className="player-bar">
+                        <div className="player-bar-fill" style={{ width: `${Math.min(100, (server.playing / server.maxPlayers) * 100)}%` }} />
+                      </div>
+                    </td>
+                    <td>
+                      <span className={`ping-badge ${server.ping === null ? 'ping-ok' : server.ping < 80 ? 'ping-good' : server.ping < 150 ? 'ping-ok' : 'ping-bad'}`}>
+                        {server.ping === null ? 'N/A' : `${server.ping} ms`}
+                      </span>
+                    </td>
+                    <td>{server.fps.toFixed(1)}</td>
+                    <td><code className="job-id" title={server.id}>{server.id.substring(0, 8)}…</code></td>
+                    <td className="col-action">
+                      <button className="btn btn-ghost btn-sm" onClick={() => copyJobId(server.id)} title="Copy Job ID">
+                        {copiedId === server.id ? 'Copied' : 'Copy ID'}
+                      </button>
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => handleJoin(server.id)}
+                        disabled={joiningServerId !== null || count === 0}
+                        title={count === 0 ? 'Select accounts in All accounts first' : 'Join this server'}
+                      >
+                        {joiningServerId === server.id ? 'Joining...' : `Join${count > 1 ? ` (${count})` : ''}`}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {nextCursor && (
+              <div className="load-more-container">
+                <button className="btn btn-secondary" onClick={loadMore} disabled={loadingMore}>
+                  {loadingMore ? 'Loading...' : 'Load more servers'}
+                </button>
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="server-list-empty">
+            {loadedPlaceId ? 'No servers found.' : 'Enter a Place ID to browse public servers.'}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }

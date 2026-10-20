@@ -7,12 +7,11 @@ import { AccountList } from './components/AccountList';
 import { JoinGameBar } from './components/JoinGameBar';
 import { AddAccountDialog } from './components/AddAccountDialog';
 import { JoinGameDialog } from './components/JoinGameDialog';
-import { ServerListDialog } from './components/ServerListDialog';
+import { ServerBrowserPage } from './components/ServerBrowserPage';
 import { AccountUtilsDialog } from './components/AccountUtilsDialog';
 import { ImportExportDialog } from './components/ImportExportDialog';
 import { SettingsDialog } from './components/SettingsDialog';
 import { MultiLoginPage } from './components/MultiLoginPage';
-import { WatcherPanel } from './components/WatcherPanel';
 import * as api from './api/accounts';
 import { getAccountCookie } from './api/importExport';
 import { openLoginWindow } from './api/login';
@@ -37,10 +36,9 @@ function App() {
 
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isJoinGameOpen, setIsJoinGameOpen] = useState(false);
-  const [isServerListOpen, setIsServerListOpen] = useState(false);
   const [isAccountUtilsOpen, setIsAccountUtilsOpen] = useState(false);
   const [isImportExportOpen, setIsImportExportOpen] = useState(false);
-  const [view, setView] = useState<'accounts' | 'multilogin'>('accounts');
+  const [view, setView] = useState<'accounts' | 'multilogin' | 'servers'>('accounts');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([]);
@@ -154,16 +152,18 @@ function App() {
 
   return (
     <div className="app-container">
-      <WorkspaceNav groups={groups} selectedGroup={selectedGroup} onGroup={(g) => { setSelectedGroup(g); setView('accounts'); }} count={accounts.length} onServers={() => setIsServerListOpen(true)} onTransfer={() => setIsImportExportOpen(true)} onSettings={() => setIsSettingsOpen(true)} onMultiLogin={() => setView('multilogin')} activeView={view} />
+      <WorkspaceNav groups={groups} selectedGroup={selectedGroup} onGroup={(g) => { setSelectedGroup(g); setView('accounts'); }} count={accounts.length} onServers={() => setView('servers')} onTransfer={() => setIsImportExportOpen(true)} onSettings={() => setIsSettingsOpen(true)} onMultiLogin={() => setView('multilogin')} activeView={view} />
       <div className="workspace-shell">
       <header className="workspace-header">
-        <div className="workspace-breadcrumb">Workspace <span>/</span> <strong>{view === 'multilogin' ? 'Multi-login' : selectedGroup === 'All' ? 'All accounts' : selectedGroup}</strong></div>
+        <div className="workspace-breadcrumb">Workspace <span>/</span> <strong>{view === 'multilogin' ? 'Multi-login' : view === 'servers' ? 'Server browser' : selectedGroup === 'All' ? 'All accounts' : selectedGroup}</strong></div>
         <span className="workspace-summary"><i className="summary-dot" />{Array.from(presenceMap.values()).filter(p => p.presenceType > 0).length} online</span>
       </header>
       {/* Kept mounted (hidden when inactive) so an in-progress bulk run, its
           live cards and the export textarea survive switching tabs. */}
       <main className="workspace-main" style={{ display: view === 'multilogin' ? undefined : 'none' }}><MultiLoginPage onProgress={fetchAccounts} /></main>
-      {view !== 'multilogin' && <main className="workspace-main">
+      <main className="workspace-main" style={{ display: view === 'servers' ? undefined : 'none' }}><ServerBrowserPage selectedAccountIds={selectedAccountIds} /></main>
+      {/* Hidden, not unmounted, so the account selection survives visiting the server browser */}
+      <main className="workspace-main" style={{ display: view === 'accounts' ? undefined : 'none' }}>
       <section className="workspace-heading" aria-label="Account overview">
         <div><h1>{selectedGroup === 'All' ? 'Your accounts' : selectedGroup}</h1><p>A little organization. A lot more play.</p></div>
         <div className="heading-actions"><button className="btn btn-secondary" onClick={handleLogin}>Login with Roblox <Icon name="arrow" size={15} /></button><button className="btn btn-primary" onClick={() => setIsAddDialogOpen(true)}><Icon name="plus" size={16} />Add account</button></div>
@@ -197,13 +197,12 @@ function App() {
         <header className="session-heading"><span className="session-icon"><Icon name="play" size={20} /></span><h2>Launch a session</h2><p>Your next adventure starts here.</p></header>
         <div className="session-selection"><span>Launching with</span><strong>{selectedAccountIds.length ? `${selectedAccountIds.length} selected account${selectedAccountIds.length > 1 ? 's' : ''}` : 'No accounts selected'}</strong><p>{inspectedAccount ? inspectedAccount.username + (selectedAccountIds.length > 1 ? ` + ${selectedAccountIds.length - 1} more` : '') : 'Choose accounts from your library.'}</p></div>
         <JoinGameBar selectedAccountIds={selectedAccountIds} />
-        <button className="server-shortcut" onClick={() => setIsServerListOpen(true)}><Icon name="server" /><span>Find a public server<small>Browse available game instances</small></span><Icon name="arrow" size={16} /></button>
+        <button className="server-shortcut" onClick={() => setView('servers')}><Icon name="server" /><span>Find a public server<small>Browse available game instances</small></span><Icon name="arrow" size={16} /></button>
         {inspectedAccount ? <section className="inspector"><h3>Account details</h3><div className="inspector-identity"><span className="account-monogram">{inspectedAccount.username.slice(0,2).toUpperCase()}</span><div><strong>{inspectedAccount.username}</strong><p>{inspectedAccount.display_name || 'Roblox account'}</p></div></div><dl><div><dt>Group</dt><dd>{inspectedAccount.group || 'Ungrouped'}</dd></div><div><dt>Balance</dt><dd>{inspectedAccount.robux === null ? 'Unavailable' : `R$ ${inspectedAccount.robux.toLocaleString()}`}</dd></div></dl><button className="btn btn-secondary" onClick={() => handleAccountUtils(inspectedAccount.id)}>Manage account<Icon name="arrow" size={14} /></button></section> : <div className="session-tip"><Icon name="accounts" /><p>Select multiple accounts to launch them together. Use Shift + click to select a range.</p></div>}
       </aside>
       </div>
-      </main>}
+      </main>
 
-      <WatcherPanel accounts={accounts.map(a => ({ id: a.id, username: a.username }))} />
       </div>
 
       {isAddDialogOpen && <AddAccountDialog
@@ -219,12 +218,6 @@ function App() {
         onClose={() => setIsJoinGameOpen(false)}
         accountId={selectedAccountId}
       />}
-
-      <ServerListDialog
-        isOpen={isServerListOpen}
-        onClose={() => setIsServerListOpen(false)}
-        accountId={selectedAccountIds[0] || null}
-      />
 
       {isAccountUtilsOpen && <AccountUtilsDialog
         key={selectedAccountId}
