@@ -158,18 +158,113 @@ const DETECT_JS: &str = r#"
 /// Cheap/local (no network). The cookie is the prize: once it exists we can
 /// harvest it even behind a face-lock / captcha interstitial.
 fn cookie_present(win: &tauri::WebviewWindow) -> bool {
+    read_roblosecurity(win).is_some()
+}
+
+/// Current non-empty `.ROBLOSECURITY` value in this window, if any.
+/// Blocks on WebView2 — call from an async task, never a sync page-load handler.
+fn read_roblosecurity(win: &tauri::WebviewWindow) -> Option<String> {
     let url: tauri::Url = "https://www.roblox.com".parse().unwrap();
-    if let Ok(cs) = win.cookies_for_url(url) {
-        if cs.iter().any(|c| c.name() == ".ROBLOSECURITY" && !c.value().is_empty()) {
-            return true;
-        }
+    let find = |cs: Vec<tauri::webview::Cookie<'static>>| {
+        cs.into_iter()
+            .find(|c| c.name() == ".ROBLOSECURITY" && !c.value().is_empty())
+            .map(|c| c.value().to_string())
+    };
+    win.cookies_for_url(url).ok().and_then(find)
+        .or_else(|| win.cookies().ok().and_then(find))
+}
+
+/// Chrome-like UA used by Open Browser; also exported in "Copy header".
+const BROWSER_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
+/// Show a short message inside an Open Browser window, optionally copying
+/// `copy` to the clipboard (the click that triggered it is the user gesture).
+fn browser_toast(win: &tauri::WebviewWindow, msg: &str, copy: Option<&str>) {
+    let js = format!(
+        r#"(function(){{
+            var msg = {msg}, text = {copy};
+            function toast(m){{
+                var t = document.getElementById('ram-toast');
+                if (!t) {{ t = document.createElement('div'); t.id = 'ram-toast'; document.body.appendChild(t); }}
+                t.textContent = m;
+                t.style.cssText = 'position:fixed;top:50px;right:12px;z-index:2147483647;background:#1a1a2e;color:#f0f0f0;border:1px solid #5865f2;border-radius:8px;padding:10px 14px;font:13px system-ui,sans-serif;max-width:420px;box-shadow:0 6px 20px rgba(0,0,0,.4)';
+                clearTimeout(window.__ramToastT); window.__ramToastT = setTimeout(function(){{ t.remove(); }}, 4000);
+            }}
+            if (text === null) {{ toast(msg); return; }}
+            function fallback(){{
+                var ta = document.createElement('textarea'); ta.value = text;
+                ta.style.cssText = 'position:fixed;top:-1000px'; document.body.appendChild(ta);
+                ta.select(); var ok = false; try {{ ok = document.execCommand('copy'); }} catch (e) {{}}
+                ta.remove(); toast(ok ? msg : 'Copy blocked by the page, try again.');
+            }}
+            if (navigator.clipboard) navigator.clipboard.writeText(text).then(function(){{ toast(msg); }}, fallback);
+            else fallback();
+        }})();"#,
+        msg = serde_json::to_string(msg).unwrap_or_default(),
+        copy = copy.map(|c| serde_json::to_string(c).unwrap_or_default()).unwrap_or_else(|| "null".into()),
+    );
+    let _ = win.eval(&js);
+}
+
+/// "Save cookie" button: store this window's current cookie on the account,
+/// but only if it belongs to the SAME Roblox user (never overwrite with
+/// another account's session).
+async fn save_browser_cookie(app: AppHandle, win: tauri::WebviewWindow, account_id: Uuid) {
+    let Some(fresh) = read_roblosecurity(&win) else {
+        browser_toast(&win, "No Roblox login in this window. Log in first.", None);
+        return;
+    };
+    let state = app.state::<AppState>();
+    let (stored, user_id, username) = {
+        let Ok(store) = state.store.lock() else { return };
+        let Ok(acc) = store.get_account(&account_id) else { return };
+        let stored = store.get_cookie(&account_id).unwrap_or_default();
+        (stored, acc.user_id, acc.username.clone())
+    };
+    if stored.trim_start_matches(".ROBLOSECURITY=") == fresh {
+        browser_toast(&win, "Cookie unchanged, already saved.", None);
+        return;
     }
-    if let Ok(cs) = win.cookies() {
-        if cs.iter().any(|c| c.name() == ".ROBLOSECURITY" && !c.value().is_empty()) {
-            return true;
+    let user = match state.roblox.get_authenticated_user(&fresh).await {
+        Ok(u) => u,
+        Err(e) => {
+            browser_toast(&win, &format!("Not saved: this login isn't usable yet ({e})."), None);
+            return;
         }
+    };
+    if user_id.is_some_and(|id| id != user.id) {
+        browser_toast(&win, &format!("Not saved: logged in as {}, not {}.", user.name, username), None);
+        return;
     }
-    false
+    let saved = state.store.lock().ok().is_some_and(|mut store| {
+        let ok = store.update_cookie(&account_id, &fresh).is_ok();
+        if ok {
+            let _ = store.set_flag(&account_id, "cookie_dead", false);
+        }
+        ok
+    });
+    if saved {
+        log::info!("[{username}] saved new cookie from browser window");
+        browser_toast(&win, &format!("New cookie saved for {username}."), None);
+        let _ = app.emit("browser-cookie", serde_json::json!({
+            "saved": true,
+            "message": format!("New cookie saved for {}.", username),
+        }));
+    } else {
+        browser_toast(&win, "Saving the cookie failed.", None);
+    }
+}
+
+/// "Copy header" button: Cookie + User-Agent of this browser session.
+fn copy_browser_header(win: tauri::WebviewWindow) {
+    match read_roblosecurity(&win) {
+        Some(c) => browser_toast(
+            &win,
+            "Header copied.",
+            Some(&format!("Cookie: .ROBLOSECURITY={c}\nUser-Agent: {BROWSER_UA}")),
+        ),
+        None => browser_toast(&win, "No Roblox login in this window, nothing to copy.", None),
+    }
 }
 
 /// Extract the detect-script state code from a window URL's `#rams=<code>`
@@ -499,6 +594,15 @@ pub async fn open_browser(
             bar.appendChild(fwd);
             bar.appendChild(reload);
             bar.appendChild(input);
+            [['Save cookie', 'save-cookie', 'Store this login as the account cookie'],
+             ['Copy header', 'copy-header', 'Copy Cookie + User-Agent headers']].forEach(function(b) {
+                var btn = document.createElement('button');
+                btn.className = 'ram-btn ram-btn-text';
+                btn.textContent = b[0];
+                btn.title = b[2];
+                btn.onclick = function() { location.href = 'https://ram.invalid/' + b[1]; };
+                bar.appendChild(btn);
+            });
 
             // Inject styles
             var style = document.createElement('style');
@@ -521,6 +625,7 @@ pub async fn open_browser(
                 '  min-width: 34px; text-align: center;',
                 '}',
                 '#ram-nav-bar .ram-btn:hover { background: #3a3a58; }',
+                '#ram-nav-bar .ram-btn-text { font-size: 12px; white-space: nowrap; }',
                 '#ram-nav-bar .ram-btn:active { background: #4a4a68; }',
                 '#ram-url-input {',
                 '  flex: 1; background: #0f0f1a; color: #f0f0f0;',
@@ -572,7 +677,7 @@ pub async fn open_browser(
     "#;
 
     // Chrome-like user agent so Roblox serves the full desktop site
-    let user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+    let user_agent = BROWSER_UA;
 
     // Build browser window — navigates to roblox.com/login first.
     // on_page_load injects cookie once we're on roblox.com domain (document.cookie
@@ -592,6 +697,28 @@ pub async fn open_browser(
     .data_directory(browser_data_dir)
     .initialization_script(address_bar_script)
     .on_page_load(build_cookie_handler(escaped_cookie, target_url))
+    // Bar buttons "navigate" to https://ram.invalid/<action>; catch & cancel it.
+    .on_navigation({
+        let app = app.clone();
+        let label = window_label.clone();
+        move |url| {
+            if url.host_str() != Some("ram.invalid") {
+                return true;
+            }
+            if let Some(win) = app.get_webview_window(&label) {
+                let action = url.path().to_string();
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    match action.as_str() {
+                        "/save-cookie" => save_browser_cookie(app, win, uuid).await,
+                        "/copy-header" => copy_browser_header(win),
+                        _ => {}
+                    }
+                });
+            }
+            false
+        }
+    })
     .build()
     .map_err(|e| AppError::Other(format!("Failed to create browser window: {}", e)))?;
 
