@@ -27,6 +27,11 @@
   font-weight: 500;
 }
 
+.join-hint {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
 .join-input-wrapper {
   position: relative;
   overflow: visible;
