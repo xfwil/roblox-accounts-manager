@@ -146,22 +146,63 @@ pub async fn update_account(
     Ok(view)
 }
 
+/// Manual "Check unlock": presses Unlock via the API and reports which
+/// challenge Roblox asks for (captcha / biometric), or that it unlocked.
+#[tauri::command]
+pub async fn check_unlock(id: String, app: tauri::AppHandle, state: State<'_, AppState>) -> AppResult<String> {
+    let uuid = Uuid::parse_str(&id)
+        .map_err(|e| crate::error::AppError::Other(format!("Invalid UUID: {}", e)))?;
+    let (cookie, username) = {
+        let store = state.store.lock().map_err(|e| crate::error::AppError::Other(format!("Lock poisoned: {}", e)))?;
+        (store.get_cookie(&uuid)?, store.get_account(&uuid)?.username.clone())
+    };
+    let (status, challenge, body) = state.roblox.press_unlock(&cookie).await?;
+    log::info!("[{username}] check unlock: status={status} challenge={challenge:?} body={}", body.chars().take(300).collect::<String>());
+    if status == 401 {
+        if let Ok(mut store) = state.store.lock() {
+            let _ = store.set_flag(&uuid, "cookie_dead", true);
+        }
+        return Err(crate::error::AppError::InvalidCookie("Cookie is invalid or expired".into()));
+    }
+    let message = crate::commands::apply_unlock_result(&app, uuid, challenge.as_deref(), status, true)
+        .unwrap_or_else(|| format!("{username}: no challenge (HTTP {status}). {}", body.chars().take(160).collect::<String>()));
+    use tauri::Emitter;
+    let _ = app.emit("browser-cookie", serde_json::json!({ "saved": true, "message": message }));
+    Ok(message)
+}
+
 /// Refresh account info from Roblox API
 #[tauri::command]
 pub async fn refresh_account(id: String, state: State<'_, AppState>) -> AppResult<AccountView> {
     let uuid = Uuid::parse_str(&id)
         .map_err(|e| crate::error::AppError::Other(format!("Invalid UUID: {}", e)))?;
 
-    let cookie = {
+    let (cookie, known_id, known_name) = {
         let store = state.store.lock().map_err(|e| {
             crate::error::AppError::Other(format!("Lock poisoned: {}", e))
         })?;
-        store.get_cookie(&uuid)?
+        let acc = store.get_account(&uuid)?;
+        (store.get_cookie(&uuid)?, acc.user_id, acc.username.clone())
     };
 
     let user = match state.roblox.get_authenticated_user(&cookie).await {
         Ok(u) => u,
         Err(e) => {
+            // Moderated: ask the public profile whether it's a permanent ban.
+            // Unknown (lookup failed) leaves the banned flag as it was.
+            let banned = match &e {
+                crate::error::AppError::Moderated(_) => match state.roblox.is_banned(known_id, &known_name).await {
+                    Ok(b) => {
+                        log::info!("[{known_name}] moderated, isBanned={b}");
+                        Some(b)
+                    }
+                    Err(err) => {
+                        log::warn!("[{known_name}] ban check failed: {err}");
+                        None
+                    }
+                },
+                _ => None,
+            };
             // Persist durable account states; network/5xx blips flag nothing.
             //  - 401 InvalidCookie  → cookie is dead (re-login needed)
             //  - 403 Moderated      → cookie alive but account is banned/moderated
@@ -174,6 +215,9 @@ pub async fn refresh_account(id: String, state: State<'_, AppState>) -> AppResul
                     crate::error::AppError::Moderated(_) => {
                         let _ = store.set_flag(&uuid, "moderated", true);
                         let _ = store.set_flag(&uuid, "cookie_dead", false);
+                        if let Some(b) = banned {
+                            let _ = store.set_flag(&uuid, "banned", b);
+                        }
                     }
                     _ => {}
                 }
@@ -209,6 +253,8 @@ pub async fn refresh_account(id: String, state: State<'_, AppState>) -> AppResul
     // drop it too (a future locked login would re-flag it).
     account.fields.remove("cookie_dead");
     account.fields.remove("moderated");
+    account.fields.remove("banned");
+    account.fields.remove("unlock_challenge");
     account.fields.remove("facelock");
 
     let view = account.to_view();

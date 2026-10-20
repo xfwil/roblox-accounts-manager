@@ -14,7 +14,7 @@ interface ReportsPageProps {
 
 export function ReportsPage({ accounts, onRefresh, onCopyCookies, refreshing }: ReportsPageProps) {
   const [group, setGroup] = useState('All');
-  const { sort, th } = useSort<'total' | 'username' | 'group' | 'facelock' | 'moderated' | 'cookie_dead' | 'last' | 'now'>('total');
+  const { sort, th } = useSort<'total' | 'username' | 'group' | 'facelock' | 'banned' | 'moderated' | 'cookie_dead' | 'last' | 'now'>('total');
   const groups = useMemo(() => [...new Set(accounts.map(a => a.group || 'Ungrouped'))].sort(), [accounts]);
   const list = group === 'All' ? accounts : accounts.filter(a => (a.group || 'Ungrouped') === group);
 
@@ -47,7 +47,7 @@ export function ReportsPage({ accounts, onRefresh, onCopyCookies, refreshing }: 
       <section className="reports-heading">
         <div>
           <h1>Reports</h1>
-          <p>How often accounts hit face-lock, moderation or a dead cookie. Moderated and cookie dead are only detected when you refresh.</p>
+          <p>How often accounts hit face-lock, moderation, a permanent ban or a dead cookie. Banned, moderated and cookie dead are only detected when you refresh.</p>
         </div>
         <select className="input-field reports-group" aria-label="Filter by group" value={group} onChange={e => setGroup(e.target.value)}>
           <option value="All">All groups</option>
@@ -94,6 +94,7 @@ export function ReportsPage({ accounts, onRefresh, onCopyCookies, refreshing }: 
                   {th('username', 'Account')}
                   {th('group', 'Group')}
                   {th('facelock', 'Face-lock', 'num')}
+                  {th('banned', 'Banned', 'num')}
                   {th('moderated', 'Moderated', 'num')}
                   {th('cookie_dead', 'Cookie dead', 'num')}
                   {th('last', 'Last event')}

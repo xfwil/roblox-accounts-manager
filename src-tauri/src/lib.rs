@@ -175,6 +175,7 @@ pub fn run() {
             commands::remove_account,
             commands::update_account,
             commands::refresh_account,
+            commands::check_unlock,
             commands::reorder_accounts,
             commands::get_groups,
             commands::get_account_count,

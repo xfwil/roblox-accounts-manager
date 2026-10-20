@@ -48,3 +48,8 @@ export async function getGroups(): Promise<string[]> {
 export async function getAccountCount(): Promise<number> {
   return invoke<number>('get_account_count');
 }
+
+/** Press Unlock on a moderated account via the API; returns what Roblox asked for. */
+export async function checkUnlock(id: string): Promise<string> {
+  return invoke<string>('check_unlock', { id });
+}
