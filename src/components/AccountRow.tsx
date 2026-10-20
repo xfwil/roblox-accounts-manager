@@ -2,7 +2,7 @@ import React, { useRef, useState } from 'react';
 import type { AccountView } from '../types/account';
 import './AccountRow.css';
 import { Icon } from './Icon';
-import { historySummary } from '../accountHistory';
+import { historySummary, unlockChallenge } from '../accountHistory';
 
 interface AccountRowProps {
   account: AccountView;
@@ -75,6 +75,7 @@ export function AccountRow({
   const isStale = daysSinceUsed >= 20;
   const history = historySummary(account);
   const historyNote = history ? `\nHistory: ${history}` : '';
+  const unlock = unlockChallenge(account);
 
   const handleAliasKeyDown = async (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
@@ -200,8 +201,10 @@ export function AccountRow({
         <span className="text-secondary">{formatDate(account.created_at)}</span>
       </td>
       <td className="col-status">
-        {account.fields?.moderated === '1' ? (
-          <span className="badge badge-moderated" title={`Account is moderated/banned by Roblox (403 'User is moderated'). Cookie still valid.${historyNote}`}>Moderated</span>
+        {account.fields?.banned === '1' ? (
+          <span className="badge badge-banned" title={`Permanently banned by Roblox (profile shows isBanned). Cannot be unlocked.${historyNote}`}>Banned</span>
+        ) : account.fields?.moderated === '1' ? (
+          <span className="badge badge-moderated" title={`Account is moderated/banned by Roblox (403 'User is moderated'). Cookie still valid.${unlock ? ` Unlock needs: ${unlock}.` : ' Press Unlock in Open Browser to see which check it needs.'}${historyNote}`}>{unlock ? `Moderated · ${unlock}` : 'Moderated'}</span>
         ) : account.fields?.cookie_dead === '1' ? (
           <span className="badge badge-dead" title={`Last refresh failed — cookie is invalid/expired (401). Re-login this account.${historyNote}`}>Cookie dead</span>
         ) : account.fields?.facelock === '1' ? (

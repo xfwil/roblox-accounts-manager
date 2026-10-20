@@ -550,6 +550,44 @@ pub async fn open_browser(
             }
         }, true); // capture phase to intercept before page handlers
 
+        // === Unlock challenge watcher ===
+        // When Roblox answers with a challenge (rblx-challenge-type header) on the
+        // moderation "unlock" flow, report it to RAM via a short-lived page title.
+        function ramReport(url, status, type, body) {
+            var path = location.pathname;
+            if (!/usermoderation/i.test(url) && !/not-approved/i.test(path)) return;
+            var old = document.title;
+            document.title = ['RAM_CHALLENGE', type || 'none', status, String(url).split('?')[0], path, String(body || '').slice(0, 2000)].join('|');
+            setTimeout(function() { if (document.title.indexOf('RAM_CHALLENGE|') === 0) document.title = old; }, 500);
+        }
+        var _fetch = window.fetch;
+        if (_fetch) window.fetch = function(input, init) {
+            var url = typeof input === 'string' ? input : (input && input.url) || '';
+            return _fetch.apply(this, arguments).then(function(res) {
+                try {
+                    var type = res.headers.get('rblx-challenge-type');
+                    if (type || /usermoderation/i.test(url)) {
+                        res.clone().text().then(function(b) { ramReport(url, res.status, type, b); }, function() {});
+                    }
+                } catch (e) {}
+                return res;
+            });
+        };
+        var _xopen = XMLHttpRequest.prototype.open;
+        XMLHttpRequest.prototype.open = function(method, url) {
+            var xhr = this;
+            xhr.addEventListener('loadend', function() {
+                try {
+                    var type = xhr.getResponseHeader('rblx-challenge-type');
+                    if (type || /usermoderation/i.test(url)) {
+                        var b = (xhr.responseType === '' || xhr.responseType === 'text') ? xhr.responseText : '';
+                        ramReport(url, xhr.status, type, b);
+                    }
+                } catch (e) {}
+            });
+            return _xopen.apply(this, arguments);
+        };
+
         // === Address bar UI ===
         function injectBar() {
             if (document.getElementById('ram-nav-bar')) return;
@@ -719,10 +757,62 @@ pub async fn open_browser(
             false
         }
     })
+    .on_document_title_changed({
+        let app = app.clone();
+        move |win, title| {
+            if let Some(rest) = title.strip_prefix("RAM_CHALLENGE|") {
+                record_unlock_challenge(&app, &win, uuid, rest);
+            }
+        }
+    })
     .build()
     .map_err(|e| AppError::Other(format!("Failed to create browser window: {}", e)))?;
 
     Ok(())
+}
+
+/// Unlock flow on roblox.com/not-approved: remember which challenge Roblox
+/// asked for (captcha, face/biometric, ...) so it shows in the Status column.
+/// `report` = "type|status|url|page|body" from the page hook.
+fn record_unlock_challenge(app: &AppHandle, win: &tauri::WebviewWindow, account_id: Uuid, report: &str) {
+    let mut p = report.splitn(5, '|');
+    let (kind, status, url, page, body) = (
+        p.next().unwrap_or("").to_lowercase(),
+        p.next().unwrap_or("").parse::<u16>().unwrap_or(0),
+        p.next().unwrap_or(""),
+        p.next().unwrap_or(""),
+        p.next().unwrap_or(""),
+    );
+    log::info!("unlock watch: type={kind} status={status} url={url} page={page} body={body}");
+    let challenge = (kind != "none").then_some(kind.as_str());
+    let Some(message) = apply_unlock_result(app, account_id, challenge, status, url.contains("reactivate")) else { return };
+    browser_toast(win, &message, None);
+    let _ = app.emit("browser-cookie", serde_json::json!({ "saved": true, "message": message }));
+}
+
+/// Store what an Unlock press returned. Some(message) when something changed.
+pub fn apply_unlock_result(app: &AppHandle, account_id: Uuid, challenge: Option<&str>, status: u16, is_reactivate: bool) -> Option<String> {
+    let state = app.state::<AppState>();
+    let mut store = state.store.lock().ok()?;
+    let username = store.get_account(&account_id).map(|a| a.username.clone()).unwrap_or_default();
+    if let Some(kind) = challenge {
+        let kind = kind.to_lowercase();
+        let _ = store.set_flag(&account_id, "moderated", true);
+        let _ = store.set_field(&account_id, "unlock_challenge", Some(&kind));
+        let _ = store.set_field(&account_id, "unlock_challenge_at", Some(&chrono::Utc::now().to_rfc3339()));
+        // Biometric (face) check to unlock = face-locked account.
+        let face = ["face", "bio", "selfie", "liveness", "ident", "age"].iter().any(|k| kind.contains(k));
+        if face {
+            let _ = store.set_flag(&account_id, "facelock", true);
+        }
+        let label = if face { "Facelock" } else if kind.contains("captcha") { "Captcha Login" } else { kind.as_str() };
+        Some(format!("{username}: unlock needs {label}."))
+    } else if is_reactivate && (200..300).contains(&status) {
+        let _ = store.set_flag(&account_id, "moderated", false);
+        Some(format!("{username}: account unlocked."))
+    } else {
+        None
+    }
 }
 
 /// on_page_load handler: injects cookie on first roblox.com page, then redirects to target.

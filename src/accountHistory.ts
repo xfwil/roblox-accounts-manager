@@ -4,6 +4,7 @@ import type { AccountView } from './types/account';
 // history written each time an account enters the state.
 export const PROBLEMS = [
   { key: 'facelock', label: 'Face-lock', short: 'FL', badge: 'badge-facelock' },
+  { key: 'banned', label: 'Banned', short: 'Ban', badge: 'badge-banned' },
   { key: 'moderated', label: 'Moderated', short: 'Mod', badge: 'badge-moderated' },
   { key: 'cookie_dead', label: 'Cookie dead', short: 'Dead', badge: 'badge-dead' },
 ] as const;
@@ -25,6 +26,15 @@ export function historyLast(acc: AccountView, key: ProblemKey): string | null {
 export function lastEvent(acc: AccountView): string | null {
   const dates = PROBLEMS.map(p => historyLast(acc, p.key)).filter((d): d is string => !!d);
   return dates.sort().at(-1) ?? null;
+}
+
+/** What Roblox asked for when Unlock was pressed on a moderated account (seen in Open Browser). */
+export function unlockChallenge(acc: AccountView): string | null {
+  const t = acc.fields?.unlock_challenge;
+  if (!t) return null;
+  if (/face|bio|selfie|liveness|ident|age/.test(t)) return 'Facelock';
+  if (/captcha|arkose/.test(t)) return 'Captcha Login';
+  return t;
 }
 
 export const formatDay = (iso: string | null) =>

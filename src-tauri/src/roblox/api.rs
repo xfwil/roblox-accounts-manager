@@ -225,6 +225,77 @@ impl RobloxClient {
         Ok(result.data.first().and_then(|d| d.image_url.clone()))
     }
 
+    /// Public (no cookie) permanent-ban check: `isBanned` on users/{id}.
+    /// Every authenticated API just says "moderated"; this tells a permanent
+    /// ban (true) from an unlockable one (false). Looks the id up by name if unknown.
+    pub async fn is_banned(&self, user_id: Option<u64>, username: &str) -> AppResult<bool> {
+        #[derive(Deserialize)]
+        struct Found { id: u64 }
+        #[derive(Deserialize)]
+        struct Lookup { data: Vec<Found> }
+        let id = match user_id {
+            Some(id) => id,
+            None => {
+                let r: Lookup = self.client
+                    .post("https://users.roblox.com/v1/usernames/users")
+                    .json(&serde_json::json!({ "usernames": [username], "excludeBannedUsers": false }))
+                    .send().await?.json().await?;
+                r.data.first().map(|f| f.id)
+                    .ok_or_else(|| AppError::RobloxApi(format!("User {username} not found")))?
+            }
+        };
+        // Public endpoint is rate-limited; bulk refresh can hit 429, so back off and retry.
+        let mut last = String::new();
+        for attempt in 0..4u64 {
+            if attempt > 0 {
+                tokio::time::sleep(std::time::Duration::from_secs(2 * attempt)).await;
+            }
+            let resp = self.client
+                .get(format!("https://users.roblox.com/v1/users/{id}"))
+                .header(ACCEPT, "application/json")
+                .send().await?;
+            if resp.status().is_success() {
+                let d: UserDetails = resp.json().await?;
+                return Ok(d.is_banned.unwrap_or(false));
+            }
+            last = resp.status().to_string();
+        }
+        Err(AppError::RobloxApi(format!("Ban check failed: {last}")))
+    }
+
+    /// Press "Unlock" on a moderated account (same call as roblox.com/not-approved).
+    /// Returns (status, challenge type, body). A challenge comes back as 403 with
+    /// `rblx-challenge-type`; a 2xx with no challenge means the account was unlocked.
+    pub async fn press_unlock(&self, cookie: &str) -> AppResult<(u16, Option<String>, String)> {
+        let url = "https://usermoderation.roblox.com/v1/not-approved/reactivate";
+        let mut token = String::new();
+        for _ in 0..2 {
+            let resp = self
+                .client
+                .post(url)
+                .headers(Self::auth_headers(cookie))
+                .header("x-csrf-token", &token)
+                .header("Origin", "https://www.roblox.com")
+                .header("Referer", "https://www.roblox.com/not-approved")
+                .header("Content-Type", "application/json")
+                .body("{}")
+                .send()
+                .await?;
+            let status = resp.status().as_u16();
+            let h = |k: &str| resp.headers().get(k).and_then(|v| v.to_str().ok()).map(str::to_string);
+            let (challenge, csrf) = (h("rblx-challenge-type"), h("x-csrf-token"));
+            if status == 403 && challenge.is_none() && token.is_empty() {
+                if let Some(t) = csrf {
+                    token = t; // first call only fetches the CSRF token
+                    continue;
+                }
+            }
+            let body = resp.text().await.unwrap_or_default();
+            return Ok((status, challenge, body));
+        }
+        Err(AppError::RobloxApi("Unlock: CSRF token rejected".into()))
+    }
+
     /// Get CSRF token for POST requests.
     /// Uses a lightweight endpoint that returns 403 with x-csrf-token header
     /// without side effects (no logout, no ticket generation).

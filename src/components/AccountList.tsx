@@ -5,11 +5,13 @@ import { AccountContextMenu } from './AccountContextMenu';
 import './AccountList.css';
 import { Modal } from './Modal';
 import { openBrowser } from '../api/login';
+import { checkUnlock } from '../api/accounts';
 
 type SortField = 'username' | 'alias' | 'group' | 'robux' | 'last_used' | 'created_at' | 'sort_order' | 'status';
 
 // Lower = more urgent, so an ascending sort surfaces broken accounts first.
 function statusRank(acc: AccountView): number {
+  if (acc.fields?.banned === '1') return -1;
   if (acc.fields?.moderated === '1') return 0;
   if (acc.fields?.cookie_dead === '1') return 1;
   if (acc.fields?.facelock === '1') return 2;
@@ -378,6 +380,9 @@ export function AccountList({
           y={contextMenu.y}
           onClose={closeContextMenu}
           onRefresh={() => { onRefresh(contextMenu.accountId!).catch(() => { /* error surfaced by useAccounts */ }); }}
+          onCheckUnlock={(f => f?.moderated === '1' && f?.banned !== '1')(accounts.find(a => a.id === contextMenu.accountId)?.fields)
+            ? () => { checkUnlock(contextMenu.accountId!).catch(e => onNotice?.(typeof e === 'string' ? e : 'Check unlock failed.')); }
+            : undefined}
           onEditAlias={() => setEditingAliasId(contextMenu.accountId)}
           onSetGroup={() => {
             const account = accounts.find(a => a.id === contextMenu.accountId);

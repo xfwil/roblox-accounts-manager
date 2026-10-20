@@ -186,6 +186,11 @@ impl AccountStore {
             let changed = if on {
                 acc.fields.insert(key.into(), "1".into()).as_deref() != Some("1")
             } else {
+                // No longer moderated → the unlock challenge note is stale.
+                if key == "moderated" {
+                    acc.fields.remove("unlock_challenge");
+                    acc.fields.remove("banned");
+                }
                 acc.fields.remove(key).is_some()
             };
             // History: count each time an account *enters* a problem state, so
@@ -200,6 +205,18 @@ impl AccountStore {
             if changed {
                 self.save()?;
             }
+        }
+        Ok(())
+    }
+
+    /// Set (Some) or remove (None) a free-form field.
+    pub fn set_field(&mut self, id: &Uuid, key: &str, value: Option<&str>) -> AppResult<()> {
+        if let Some(acc) = self.accounts.get_mut(id) {
+            match value {
+                Some(v) => { acc.fields.insert(key.into(), v.into()); }
+                None => { acc.fields.remove(key); }
+            }
+            self.save()?;
         }
         Ok(())
     }

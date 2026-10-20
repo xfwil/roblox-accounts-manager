@@ -7,6 +7,7 @@ interface AccountContextMenuProps {
   isOpen: boolean;
   onClose: () => void;
   onRefresh: () => void;
+  onCheckUnlock?: () => void;
   onEditAlias: () => void;
   onSetGroup: () => void;
   onCopyUsername: () => void;
@@ -24,6 +25,7 @@ export function AccountContextMenu({
   isOpen,
   onClose,
   onRefresh,
+  onCheckUnlock,
   onEditAlias,
   onSetGroup,
   onCopyUsername,
@@ -77,6 +79,15 @@ export function AccountContextMenu({
         </svg>
         Refresh
       </button>
+      {onCheckUnlock && (
+        <button className="context-menu-item" title="Press Unlock via Roblox and see which check it asks for (Captcha Login / Facelock)" onClick={() => { onCheckUnlock(); onClose(); }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="11" width="18" height="11" rx="2"></rect>
+            <path d="M7 11V7a5 5 0 0 1 9.9-1"></path>
+          </svg>
+          Check unlock
+        </button>
+      )}
       <button className="context-menu-item" onClick={() => { onEditAlias(); onClose(); }}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="M12 20h9"></path>
