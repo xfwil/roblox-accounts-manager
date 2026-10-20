@@ -2,6 +2,7 @@ import React, { useRef, useState } from 'react';
 import type { AccountView } from '../types/account';
 import './AccountRow.css';
 import { Icon } from './Icon';
+import { historySummary } from '../accountHistory';
 
 interface AccountRowProps {
   account: AccountView;
@@ -72,6 +73,8 @@ export function AccountRow({
   
   const daysSinceUsed = getDaysSinceUsed(account.last_used);
   const isStale = daysSinceUsed >= 20;
+  const history = historySummary(account);
+  const historyNote = history ? `\nHistory: ${history}` : '';
 
   const handleAliasKeyDown = async (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
@@ -198,14 +201,15 @@ export function AccountRow({
       </td>
       <td className="col-status">
         {account.fields?.moderated === '1' ? (
-          <span className="badge badge-moderated" title="Account is moderated/banned by Roblox (403 'User is moderated'). Cookie still valid.">Moderated</span>
+          <span className="badge badge-moderated" title={`Account is moderated/banned by Roblox (403 'User is moderated'). Cookie still valid.${historyNote}`}>Moderated</span>
         ) : account.fields?.cookie_dead === '1' ? (
-          <span className="badge badge-dead" title="Last refresh failed — cookie is invalid/expired (401). Re-login this account.">Cookie dead</span>
+          <span className="badge badge-dead" title={`Last refresh failed — cookie is invalid/expired (401). Re-login this account.${historyNote}`}>Cookie dead</span>
         ) : account.fields?.facelock === '1' ? (
-          <span className="badge badge-facelock" title="Face-locked — needed manual face verification at login. Cookie was saved; it may ask again.">Face-lock</span>
+          <span className="badge badge-facelock" title={`Face-locked — needed manual face verification at login. Cookie was saved; it may ask again.${historyNote}`}>Face-lock</span>
         ) : (
           <span className="text-muted">OK</span>
         )}
+        {history && <small className="status-history" title={`Problem history: ${history}`}>{history}</small>}
       </td>
       <td className="row-actions"><button className="btn-icon" aria-label={`Actions for ${account.username}`} onClick={e => { e.stopPropagation(); onContextMenu(e, account.id); }}><Icon name="more" /></button></td>
     </tr>

@@ -35,7 +35,7 @@ interface AccountListProps {
   onRemove: (id: string) => Promise<void>;
   onJoinGame: (accountId: string) => void;
   onAccountUtils: (accountId: string) => void;
-  onCopyCookie: (accountId: string) => void;
+  onCopyCookie: (accountIds: string[]) => void;
   onSelectionChange?: (ids: string[]) => void;
   onNotice?: (message: string) => void;
 }
@@ -385,7 +385,8 @@ export function AccountList({
             setGroupDialogNewGroup('');
             setGroupDialogAccountId(contextMenu.accountId);
           }}
-          onCopyCookie={() => onCopyCookie(contextMenu.accountId!)}
+          onCopyCookie={() => onCopyCookie(selectedIds.has(contextMenu.accountId!) ? visibleSelectedIds : [contextMenu.accountId!])}
+          cookieCount={selectedIds.has(contextMenu.accountId) ? visibleSelectedIds.length : 1}
           onCopyUsername={() => {
             const account = accounts.find(a => a.id === contextMenu.accountId);
             if (account) {

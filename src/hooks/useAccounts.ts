@@ -66,7 +66,9 @@ export function useAccounts() {
     }
   };
 
-  const refreshAll = async () => {
+  // ids = refresh only these accounts (default: all)
+  const refreshAll = async (ids?: string[]) => {
+    const targets = ids ? accounts.filter(a => ids.includes(a.id)) : accounts;
     try {
       setLoading(true);
       setError(null);
@@ -76,16 +78,16 @@ export function useAccounts() {
       const POOL = 5;
       const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
       let failed = 0;
-      for (let i = 0; i < accounts.length; i += POOL) {
-        const batch = accounts.slice(i, i + POOL);
+      for (let i = 0; i < targets.length; i += POOL) {
+        const batch = targets.slice(i, i + POOL);
         const results = await Promise.allSettled(batch.map(a => api.refreshAccount(a.id)));
         failed += results.filter(result => result.status === 'rejected').length;
-        if (i + POOL < accounts.length) await sleep(250);
+        if (i + POOL < targets.length) await sleep(250);
       }
       // Each refresh persists its result (incl. a cookie-dead marker on failure);
       // re-list so every row reflects the stored state, failures included.
       await fetchAccounts();
-      if (failed > 0) setError(`${failed} of ${accounts.length} accounts failed to refresh — check the Status column (Moderated / Cookie dead)`);
+      if (failed > 0) setError(`${failed} of ${targets.length} accounts failed to refresh — check the Status column (Moderated / Cookie dead)`);
 
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
