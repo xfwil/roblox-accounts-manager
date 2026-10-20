@@ -1,7 +1,7 @@
 .app-container { display: grid; grid-template-columns: 216px minmax(0, 1fr); }
 .workspace-nav { background: var(--bg-panel); border-right: 1px solid var(--border-color); display: flex; flex-direction: column; padding: 30px 16px 16px; min-height: 0; gap: 32px; }
 .nav-brand { display: flex; align-items: center; gap: 12px; padding: 0 10px 10px; }
-.nav-logo { flex-shrink: 0; width: 40px; height: 40px; border-radius: 9px; background: url('/favicon.png') 44.7% 44.7% / 148% no-repeat; }
+.nav-logo { flex-shrink: 0; width: 40px; height: 40px; border-radius: 9px; background: url('/favicon.png') center / contain no-repeat; }
 .nav-brand strong { display: block; font-size: 22px; letter-spacing: .04em; }
 .nav-brand span:not(.nav-logo) { color: var(--text-muted); font-size: 11px; }
 .workspace-nav nav { display: grid; gap: 6px; }
