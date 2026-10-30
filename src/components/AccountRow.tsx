@@ -2,7 +2,7 @@ import React, { useRef, useState } from 'react';
 import type { AccountView } from '../types/account';
 import './AccountRow.css';
 import { Icon } from './Icon';
-import { historySummary, unlockChallenge } from '../accountHistory';
+import { historySummary, unlockChallenge, captchaKind } from '../accountHistory';
 
 interface AccountRowProps {
   account: AccountView;
@@ -209,6 +209,8 @@ export function AccountRow({
           <span className="badge badge-dead" title={`Last refresh failed — cookie is invalid/expired (401). Re-login this account.${historyNote}`}>Cookie dead</span>
         ) : account.fields?.facelock === '1' ? (
           <span className="badge badge-facelock" title={`Face-locked — needed manual face verification at login. Cookie was saved; it may ask again.${historyNote}`}>Face-lock</span>
+        ) : account.fields?.captcha === '1' ? (
+          <span className="badge badge-captcha" title={`Joining a game triggers a captcha (${captchaKind(account)}). Routine human check — solve it in Open Browser / Join.${historyNote}`}>{`Captcha · ${captchaKind(account)}`}</span>
         ) : (
           <span className="text-muted">OK</span>
         )}

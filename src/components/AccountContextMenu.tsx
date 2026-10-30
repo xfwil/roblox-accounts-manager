@@ -8,6 +8,7 @@ interface AccountContextMenuProps {
   onClose: () => void;
   onRefresh: () => void;
   onCheckUnlock?: () => void;
+  onCheckCaptcha?: () => void;
   onEditAlias: () => void;
   onSetGroup: () => void;
   onCopyUsername: () => void;
@@ -26,6 +27,7 @@ export function AccountContextMenu({
   onClose,
   onRefresh,
   onCheckUnlock,
+  onCheckCaptcha,
   onEditAlias,
   onSetGroup,
   onCopyUsername,
@@ -86,6 +88,15 @@ export function AccountContextMenu({
             <path d="M7 11V7a5 5 0 0 1 9.9-1"></path>
           </svg>
           Check unlock
+        </button>
+      )}
+      {onCheckCaptcha && (
+        <button className="context-menu-item" title="Probe game-join with this cookie and report if the account hits a captcha (V1 / V2) or is clear" onClick={() => { onCheckCaptcha(); onClose(); }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9 12l2 2 4-4"></path>
+            <path d="M12 3c2.5 2 5 2 7 2a12 12 0 0 1-7 14 12 12 0 0 1-7-14c2 0 4.5 0 7-2z"></path>
+          </svg>
+          Check captcha
         </button>
       )}
       <button className="context-menu-item" onClick={() => { onEditAlias(); onClose(); }}>

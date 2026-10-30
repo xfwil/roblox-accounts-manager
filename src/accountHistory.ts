@@ -7,6 +7,7 @@ export const PROBLEMS = [
   { key: 'banned', label: 'Banned', short: 'Ban', badge: 'badge-banned' },
   { key: 'moderated', label: 'Moderated', short: 'Mod', badge: 'badge-moderated' },
   { key: 'cookie_dead', label: 'Cookie dead', short: 'Dead', badge: 'badge-dead' },
+  { key: 'captcha', label: 'Captcha', short: 'Cap', badge: 'badge-captcha' },
 ] as const;
 
 export type ProblemKey = typeof PROBLEMS[number]['key'];
@@ -35,6 +36,15 @@ export function unlockChallenge(acc: AccountView): string | null {
   if (/face|bio|selfie|liveness|ident|age/.test(t)) return 'Facelock';
   if (/captcha|arkose/.test(t)) return 'Captcha Login';
   return t;
+}
+
+/** Which captcha a game-join triggered for this account: V1 / V2 / Unknown, or null if clear. */
+export function captchaKind(acc: AccountView): string | null {
+  if (acc.fields?.captcha !== '1') return null;
+  const t = acc.fields?.captcha_type ?? '';
+  if (/v1/i.test(t)) return 'V1';
+  if (/v2/i.test(t)) return 'V2';
+  return 'Unknown';
 }
 
 export const formatDay = (iso: string | null) =>

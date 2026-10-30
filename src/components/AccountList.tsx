@@ -5,7 +5,7 @@ import { AccountContextMenu } from './AccountContextMenu';
 import './AccountList.css';
 import { Modal } from './Modal';
 import { openBrowser } from '../api/login';
-import { checkUnlock } from '../api/accounts';
+import { checkUnlock, checkCaptcha } from '../api/accounts';
 
 type SortField = 'username' | 'alias' | 'group' | 'robux' | 'last_used' | 'created_at' | 'sort_order' | 'status';
 
@@ -15,7 +15,8 @@ function statusRank(acc: AccountView): number {
   if (acc.fields?.moderated === '1') return 0;
   if (acc.fields?.cookie_dead === '1') return 1;
   if (acc.fields?.facelock === '1') return 2;
-  return 3;
+  if (acc.fields?.captcha === '1') return 3;
+  return 4;
 }
 type SortDirection = 'asc' | 'desc';
 
@@ -382,6 +383,9 @@ export function AccountList({
           onRefresh={() => { onRefresh(contextMenu.accountId!).catch(() => { /* error surfaced by useAccounts */ }); }}
           onCheckUnlock={(f => f?.moderated === '1' && f?.banned !== '1')(accounts.find(a => a.id === contextMenu.accountId)?.fields)
             ? () => { checkUnlock(contextMenu.accountId!).catch(e => onNotice?.(typeof e === 'string' ? e : 'Check unlock failed.')); }
+            : undefined}
+          onCheckCaptcha={accounts.find(a => a.id === contextMenu.accountId)?.fields?.banned !== '1'
+            ? () => { checkCaptcha(contextMenu.accountId!).catch(e => onNotice?.(typeof e === 'string' ? e : 'Check captcha failed.')); }
             : undefined}
           onEditAlias={() => setEditingAliasId(contextMenu.accountId)}
           onSetGroup={() => {
