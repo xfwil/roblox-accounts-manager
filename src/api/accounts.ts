@@ -45,6 +45,23 @@ export async function getGroups(): Promise<string[]> {
   return invoke<string[]>('get_groups');
 }
 
+/** Set an account's full group membership (multi-group). */
+export async function setAccountGroups(id: string, groups: string[]): Promise<AccountView> {
+  return invoke<AccountView>('set_account_groups', { id, groups });
+}
+
+export async function createGroup(name: string): Promise<string[]> {
+  return invoke<string[]>('create_group', { name });
+}
+
+export async function renameGroup(from: string, to: string): Promise<string[]> {
+  return invoke<string[]>('rename_group', { from, to });
+}
+
+export async function deleteGroup(name: string): Promise<string[]> {
+  return invoke<string[]>('delete_group', { name });
+}
+
 export async function getAccountCount(): Promise<number> {
   return invoke<number>('get_account_count');
 }

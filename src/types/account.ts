@@ -8,6 +8,7 @@ export interface AccountView {
   is_premium: boolean | null;
   avatar_url: string | null;
   group: string | null;
+  groups: string[];
   alias: string | null;
   sort_order: number;
   last_used: string | null;

@@ -109,6 +109,18 @@ export function useAccounts() {
     }
   }
 
+  const setAccountGroups = async (id: string, groups: string[]) => {
+    try {
+      setError(null);
+      const updated = await api.setAccountGroups(id, groups);
+      setAccounts(prev => prev.map(a => (a.id === id ? updated : a)));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(`Failed to set groups: ${msg}`);
+      throw err;
+    }
+  };
+
   const reorderAccounts = async (ids: string[]) => {
     try {
         setError(null);
@@ -139,6 +151,7 @@ export function useAccounts() {
     refreshAccount,
     refreshAll,
     updateAccount,
+    setAccountGroups,
     reorderAccounts
   };
 }
