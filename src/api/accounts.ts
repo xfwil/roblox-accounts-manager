@@ -53,3 +53,8 @@ export async function getAccountCount(): Promise<number> {
 export async function checkUnlock(id: string): Promise<string> {
   return invoke<string>('check_unlock', { id });
 }
+
+/** Probe game-join to see if the account hits a captcha (CAPTCHA_V1 / CAPTCHA_V2 / UNKNOWN) or is clear. */
+export async function checkCaptcha(id: string, placeId?: string): Promise<string> {
+  return invoke<string>('check_captcha', { id, placeId });
+}

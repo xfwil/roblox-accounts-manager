@@ -171,9 +171,51 @@ pub async fn check_unlock(id: String, app: tauri::AppHandle, state: State<'_, Ap
     Ok(message)
 }
 
-/// Refresh account info from Roblox API
+/// Default place to probe for the join captcha check. Account-risk challenges
+/// return before place validation, so any valid public place works.
+/// ponytail: fixed probe place; take a placeId from the UI if per-game checks matter.
+const DEFAULT_CAPTCHA_PLACE: u64 = 113290951185459;
+
+/// Manual "Check captcha": calls the game-join API with the account's own cookie
+/// and reports whether Roblox demands a captcha (CAPTCHA_V1 / CAPTCHA_V2 / UNKNOWN)
+/// or the account is clear. Read-only — it detects the challenge, never solves it.
 #[tauri::command]
-pub async fn refresh_account(id: String, state: State<'_, AppState>) -> AppResult<AccountView> {
+pub async fn check_captcha(id: String, place_id: Option<String>, app: tauri::AppHandle, state: State<'_, AppState>) -> AppResult<String> {
+    let uuid = Uuid::parse_str(&id)
+        .map_err(|e| crate::error::AppError::Other(format!("Invalid UUID: {}", e)))?;
+    let (cookie, username) = {
+        let store = state.store.lock().map_err(|e| crate::error::AppError::Other(format!("Lock poisoned: {}", e)))?;
+        (store.get_cookie(&uuid)?, store.get_account(&uuid)?.username.clone())
+    };
+    let place = place_id.as_deref().and_then(|s| s.trim().parse::<u64>().ok()).unwrap_or(DEFAULT_CAPTCHA_PLACE);
+    let (status, challenge, body) = state.roblox.check_join_captcha(&cookie, place).await?;
+    log::info!("[{username}] check captcha: place={place} status={status} challenge={challenge:?} body={}", body.chars().take(200).collect::<String>());
+
+    if status == 401 {
+        if let Ok(mut store) = state.store.lock() {
+            let _ = store.set_flag(&uuid, "cookie_dead", true);
+        }
+        return Err(crate::error::AppError::InvalidCookie("Cookie is invalid or expired".into()));
+    }
+
+    let message = match challenge.as_deref() {
+        Some(c) if c.eq_ignore_ascii_case("captchav2") => format!("{username}: captcha required — CAPTCHA_V2"),
+        Some(c) if c.eq_ignore_ascii_case("captchav1") => format!("{username}: captcha required — CAPTCHA_V1"),
+        Some(c) => format!("{username}: captcha required — UNKNOWN ({c})"),
+        None if status == 200 => format!("{username}: no captcha — join allowed"),
+        None => format!("{username}: no captcha (HTTP {status})"),
+    };
+    use tauri::Emitter;
+    let _ = app.emit("browser-cookie", serde_json::json!({ "saved": false, "message": message }));
+    Ok(message)
+}
+
+/// Refresh account info from Roblox API.
+/// This is the one-stop health check: it determines moderated/banned, cookie
+/// death, face-lock (by pressing Unlock on a moderated-not-banned account), and
+/// whether joining a game demands a captcha (V1/V2) — all from the API.
+#[tauri::command]
+pub async fn refresh_account(id: String, app: tauri::AppHandle, state: State<'_, AppState>) -> AppResult<AccountView> {
     let uuid = Uuid::parse_str(&id)
         .map_err(|e| crate::error::AppError::Other(format!("Invalid UUID: {}", e)))?;
 
@@ -222,8 +264,22 @@ pub async fn refresh_account(id: String, state: State<'_, AppState>) -> AppResul
                     _ => {}
                 }
             }
+            // Moderated but not permanently banned: press Unlock to classify the
+            // challenge (Facelock vs Captcha Login), same as the manual Check unlock.
+            if matches!(&e, crate::error::AppError::Moderated(_)) && banned != Some(true) {
+                if let Ok((status, challenge, _body)) = state.roblox.press_unlock(&cookie).await {
+                    let _ = crate::commands::apply_unlock_result(&app, uuid, challenge.as_deref(), status, true);
+                }
+            }
             return Err(e);
         }
+    };
+
+    // Healthy auth: probe game-join to see if this account hits a captcha (V1/V2).
+    // Read-only status check — sends one join-game request, solves nothing.
+    let captcha_kind = match state.roblox.check_join_captcha(&cookie, DEFAULT_CAPTCHA_PLACE).await {
+        Ok((_s, Some(c), _b)) => Some(c.to_lowercase()),
+        _ => None,
     };
 
     let (robux, premium, avatar_url, details) = tokio::join!(
@@ -247,19 +303,19 @@ pub async fn refresh_account(id: String, state: State<'_, AppState>) -> AppResul
     if let Ok(details) = details {
         account.description = details.description;
     }
-    // Refresh succeeded → the cookie is alive and the account is in good
-    // standing; clear any stale problem markers. Face-lock is only a login-time
-    // gate marker — a clean authenticated refresh means it's been unlocked, so
-    // drop it too (a future locked login would re-flag it).
-    account.fields.remove("cookie_dead");
-    account.fields.remove("moderated");
-    account.fields.remove("banned");
-    account.fields.remove("unlock_challenge");
-    account.fields.remove("facelock");
-
-    let view = account.to_view();
     store.update_account(account)?;
 
+    // Refresh succeeded → cookie alive, good standing; clear stale problem
+    // markers (set_flag keeps the history counts). Face-lock is a login-time
+    // gate — a clean authenticated refresh means it's unlocked, so drop it too.
+    let _ = store.set_flag(&uuid, "cookie_dead", false);
+    let _ = store.set_flag(&uuid, "moderated", false); // also clears banned + unlock_challenge
+    let _ = store.set_flag(&uuid, "facelock", false);
+    // Join captcha result: flag + type (captchav1/captchav2) for V1/V2 display.
+    let _ = store.set_flag(&uuid, "captcha", captcha_kind.is_some());
+    let _ = store.set_field(&uuid, "captcha_type", captcha_kind.as_deref());
+
+    let view = store.get_account(&uuid)?.to_view();
     Ok(view)
 }
 

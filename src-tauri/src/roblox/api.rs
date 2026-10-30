@@ -296,6 +296,46 @@ impl RobloxClient {
         Err(AppError::RobloxApi("Unlock: CSRF token rejected".into()))
     }
 
+    /// Probe game-join to detect a login/join captcha challenge.
+    /// Read-only status check with the account's own cookie: it reads the
+    /// `rblx-challenge-type` header and solves/bypasses nothing. A challenged
+    /// account answers 403 with that header (captchav1 / captchav2); a clean
+    /// one has no such header (200, or a non-challenge error).
+    /// Returns (status, challenge_type, body).
+    pub async fn check_join_captcha(&self, cookie: &str, place_id: u64) -> AppResult<(u16, Option<String>, String)> {
+        let url = "https://gamejoin.roblox.com/v1/join-game";
+        let mut token = String::new();
+        for _ in 0..2 {
+            let body = format!(
+                "{{\"placeId\":{place_id},\"isTeleport\":false,\"gameJoinAttemptId\":\"{}\"}}",
+                uuid::Uuid::new_v4()
+            );
+            let resp = self
+                .client
+                .post(url)
+                .headers(Self::auth_headers(cookie))
+                .header("x-csrf-token", &token)
+                .header("Origin", "https://www.roblox.com")
+                .header("Referer", "https://www.roblox.com/")
+                .header("Content-Type", "application/json")
+                .body(body)
+                .send()
+                .await?;
+            let status = resp.status().as_u16();
+            let h = |k: &str| resp.headers().get(k).and_then(|v| v.to_str().ok()).map(str::to_string);
+            let (challenge, csrf) = (h("rblx-challenge-type"), h("x-csrf-token"));
+            if status == 403 && challenge.is_none() && token.is_empty() {
+                if let Some(t) = csrf {
+                    token = t; // first call only fetches the CSRF token
+                    continue;
+                }
+            }
+            let body = resp.text().await.unwrap_or_default();
+            return Ok((status, challenge, body));
+        }
+        Err(AppError::RobloxApi("Join captcha: CSRF token rejected".into()))
+    }
+
     /// Get CSRF token for POST requests.
     /// Uses a lightweight endpoint that returns 403 with x-csrf-token header
     /// without side effects (no logout, no ticket generation).
