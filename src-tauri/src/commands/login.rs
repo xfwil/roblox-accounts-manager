@@ -38,8 +38,8 @@ const NO_THROTTLE_ARGS: &str = "--lang=en-US --disable-features=msWebOOUI,msPdfO
 
 /// State codes the detect script can report. Any window title whose first
 /// " | "-segment isn't one of these is the page's own title — ignored.
-const KNOWN_STATES: [&str; 7] = [
-    "login", "captcha", "locked", "twostep", "error", "success", "loading",
+const KNOWN_STATES: [&str; 8] = [
+    "login", "captcha", "locked", "twostep", "error", "success", "loading", "blocked",
 ];
 
 /// Injected at document-start on every roblox.com login page. Classifies the
@@ -67,6 +67,8 @@ const DETECT_JS: &str = r#"
     if (/suspicious activity|confirm(?:ing)?\s+that\s+you['’]?re\s+a?\s*human|verify\s+(?:that\s+)?you['’]?re\s+a?\s*human|aktivitas.{0,10}mencurigakan|(?:k|meng)onfirmasi.{0,30}manusia|verifikasi.{0,20}manusia/i.test(txt)) return ['captcha', 'Solve the challenge to continue'];
     if (/two[- ]step|2-step|verification code|security code|authenticator/i.test(txt) || /2sv|two-step/i.test(href)) return ['twostep', 'Enter your verification code'];
     if (/incorrect username or password|wasn['’]?t quite right|didn['’]?t match|invalid password/i.test(txt)) return ['error', 'Incorrect username or password'];
+    // Roblox refusing the login from this IP / proxy (rate limit or flagged).
+    if (/unknown error occurred|try again later|too many (?:attempts|requests)|terjadi kesalahan|coba lagi nanti/i.test(txt)) return ['blocked', 'Roblox refused the login (IP/proxy)'];
     if (document.querySelector('#login-username, input#login-username, form#login-form')) return ['login', 'Waiting for login'];
     return ['loading', 'Loading…'];
   }
@@ -962,7 +964,7 @@ const BULK_FILL_JS: &str = r#"
     return !!b;
   }
   function busy() {
-    return /captcha|challenge|verify|incorrect|two-step|verification|suspicious|locked|one-time|terkunci|verifikasi|mencurigakan|tekan.{0,3}tahan|kode/i.test(document.body.innerText)
+    return /captcha|challenge|verify|incorrect|two-step|verification|suspicious|locked|one-time|terkunci|verifikasi|mencurigakan|tekan.{0,3}tahan|kode|unknown error|try again|too many|kesalahan|coba lagi/i.test(document.body.innerText)
       || !!document.querySelector('iframe[src*=arkose],iframe[src*=funcaptcha]');
   }
 
@@ -1027,6 +1029,135 @@ type BulkQueue = Arc<Mutex<VecDeque<(usize, Credential, usize)>>>;
 /// proxy taking >60s to show the login page gets rotated too.
 const STUCK_PROXY_TIMEOUT_SECS: u64 = 60;
 
+/// With proxies, a captcha that stays up this long means the proxy is flagged:
+/// rotate to the next proxy instead of waiting for a manual solve. (A short
+/// captcha flash that passes by itself is normal, hence the grace period.)
+/// The last proxy still waits for a manual solve.
+const CAPTCHA_ROTATE_SECS: u64 = 8;
+
+/// How a bulk run picks its network route and what it does on captcha / a dead route.
+#[derive(Clone, Copy, PartialEq)]
+enum NetMode {
+    /// No proxies, no IP change: captcha waits for a manual solve.
+    Direct,
+    /// Account i starts on proxy i; a failure moves that account to the next one.
+    Rotate,
+    /// Everyone shares one proxy until it fails, then everyone moves to the next.
+    Sticky,
+    /// No proxies: on captcha, wait for the user to toggle mobile data (new IP).
+    Mobile,
+}
+
+/// Retries per account in mobile mode (each one = one IP change).
+const MOBILE_MAX_TRIES: usize = 4;
+/// How long to wait for the public IP to change in mobile mode.
+const IP_CHANGE_TIMEOUT_SECS: u64 = 180;
+
+struct ProxyEntry {
+    /// `--proxy-server` value (None = unparseable line, connects directly).
+    arg: Option<String>,
+    /// host:port without credentials, for the log.
+    label: String,
+}
+
+struct BulkNet {
+    mode: NetMode,
+    proxies: Vec<ProxyEntry>,
+    /// Sticky mode: index of the proxy everyone is on.
+    sticky: AtomicUsize,
+}
+
+impl BulkNet {
+    /// Proxy index for this attempt, or None when no proxy is used.
+    fn pick(&self, index: usize, attempt: usize) -> Option<usize> {
+        if self.proxies.is_empty() {
+            return None;
+        }
+        match self.mode {
+            NetMode::Rotate => Some((index + attempt) % self.proxies.len()),
+            NetMode::Sticky => Some(self.sticky.load(Ordering::SeqCst) % self.proxies.len()),
+            NetMode::Direct | NetMode::Mobile => None,
+        }
+    }
+    fn max_tries(&self) -> usize {
+        match self.mode {
+            NetMode::Rotate | NetMode::Sticky => self.proxies.len().max(1),
+            NetMode::Mobile => MOBILE_MAX_TRIES,
+            NetMode::Direct => 1,
+        }
+    }
+}
+
+#[derive(Clone, Serialize)]
+struct BulkLog {
+    time: String,
+    text: String,
+}
+
+/// One line in the Multi Login log panel (and the app log). Never pass secrets.
+fn bulk_log(app: &AppHandle, text: &str) {
+    log::info!("bulk: {text}");
+    let _ = app.emit_to("main", "bulk-log", BulkLog {
+        time: chrono::Local::now().format("%H:%M:%S").to_string(),
+        text: text.to_string(),
+    });
+}
+
+async fn public_ip() -> Option<String> {
+    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).build().ok()?;
+    let ip = client.get("https://api.ipify.org").send().await.ok()?.text().await.ok()?;
+    let ip = ip.trim().to_string();
+    (!ip.is_empty() && ip.len() < 64).then_some(ip)
+}
+
+/// Mobile mode: wait until the public IP differs from `old` (user toggles data).
+async fn wait_for_new_ip(app: &AppHandle, old: Option<String>) {
+    let started = Instant::now();
+    while started.elapsed().as_secs() < IP_CHANGE_TIMEOUT_SECS {
+        if BULK_CANCEL.load(Ordering::SeqCst) {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        if let Some(ip) = public_ip().await {
+            if old.as_deref() != Some(ip.as_str()) {
+                bulk_log(app, &format!("New IP {ip}"));
+                // Give the connection a moment to settle before the retry.
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                return;
+            }
+        }
+    }
+    bulk_log(app, "IP didn't change in 3 min, retrying anyway");
+}
+
+/// Retry this same account next (front of the queue) on a new route.
+async fn retry_on_next_route(
+    app: &AppHandle, net: &BulkNet, queue: &BulkQueue,
+    index: usize, cred: &Credential, attempt: usize, proxy_idx: Option<usize>, reason: &str,
+) {
+    let who = &cred.username;
+    let tries = format!("try {}/{}", attempt + 2, net.max_tries());
+    if net.mode == NetMode::Mobile {
+        let ip = public_ip().await;
+        bulk_log(app, &format!("{who}: {reason} on IP {} → toggle mobile data now ({tries})", ip.as_deref().unwrap_or("?")));
+        emit_progress(app, index, who, "queued", "Toggle mobile data — waiting for a new IP…");
+        wait_for_new_ip(app, ip).await;
+    } else {
+        if let Some(i) = proxy_idx {
+            if net.mode == NetMode::Sticky {
+                // Only the first slot to see this proxy fail moves everyone on.
+                let _ = net.sticky.compare_exchange(i, i + 1, Ordering::SeqCst, Ordering::SeqCst);
+            }
+            let next = net.pick(index, attempt + 1).map(|n| net.proxies[n].label.as_str()).unwrap_or("direct");
+            bulk_log(app, &format!("{who}: {reason} on {} → {next} ({tries})", net.proxies[i].label));
+        }
+        emit_progress(app, index, who, "queued", &format!("{reason} — retrying with next proxy…"));
+    }
+    if let Ok(mut q) = queue.lock() {
+        q.push_front((index, cred.clone(), attempt + 1));
+    }
+}
+
 /// A proxy line parsed into its address and optional Basic-auth blob.
 struct ProxySpec {
     host_port: String,
@@ -1078,25 +1209,27 @@ fn parse_proxy(line: &str) -> Option<ProxySpec> {
 /// carry credentials — maps to a local relay `http://127.0.0.1:<port>` that
 /// forwards to it with the `Proxy-Authorization` header injected. Unparseable
 /// lines become `None` (that account connects directly).
-async fn resolve_proxies(lines: Vec<String>) -> Vec<Option<String>> {
+async fn resolve_proxies(lines: Vec<String>) -> Vec<ProxyEntry> {
     let mut out = Vec::with_capacity(lines.len());
     for line in lines {
-        match parse_proxy(&line) {
-            None => out.push(None),
+        let entry = match parse_proxy(&line) {
+            None => ProxyEntry { arg: None, label: "invalid proxy line (direct)".into() },
             Some(ProxySpec { host_port, auth_b64: None }) => {
-                out.push(Some(format!("http://{}", host_port)));
+                ProxyEntry { arg: Some(format!("http://{}", host_port)), label: host_port }
             }
             Some(ProxySpec { host_port, auth_b64: Some(auth) }) => {
                 match tokio::net::TcpListener::bind("127.0.0.1:0").await {
                     Ok(listener) => {
                         let port = listener.local_addr().map(|a| a.port()).unwrap_or(0);
+                        let label = host_port.clone();
                         tauri::async_runtime::spawn(run_auth_proxy_relay(listener, host_port, auth));
-                        out.push(Some(format!("http://127.0.0.1:{}", port)));
+                        ProxyEntry { arg: Some(format!("http://127.0.0.1:{}", port)), label }
                     }
-                    Err(_) => out.push(None),
+                    Err(_) => ProxyEntry { arg: None, label: format!("{host_port} (relay failed, direct)") },
                 }
             }
-        }
+        };
+        out.push(entry);
     }
     out
 }
@@ -1175,6 +1308,7 @@ pub async fn start_bulk_login(
     export_cookies: bool,
     gap_ms: u64,
     proxies: Vec<String>,
+    net_mode: Option<String>,
     app: AppHandle,
 ) -> AppResult<()> {
     let total = credentials.len();
@@ -1186,6 +1320,14 @@ pub async fn start_bulk_login(
     }
     BULK_CANCEL.store(false, Ordering::SeqCst);
 
+    let mode = match net_mode.as_deref() {
+        Some("mobile") => NetMode::Mobile,
+        _ if proxies.is_empty() => NetMode::Direct,
+        Some("sticky") => NetMode::Sticky,
+        _ => NetMode::Rotate,
+    };
+    // Mobile: toggling data drops every open window, so one at a time.
+    let concurrency = if mode == NetMode::Mobile { 1 } else { concurrency };
     let n = concurrency.clamp(1, 4).min(total);
     BULK_ACTIVE_SLOTS.store(n, Ordering::SeqCst);
 
@@ -1198,7 +1340,14 @@ pub async fn start_bulk_login(
 
     // Map account i → proxies[i % len]; rotation retries walk further along the
     // list. Authed proxies get a local auth-injecting relay (started here).
-    let proxies = Arc::new(resolve_proxies(proxies).await);
+    let proxies = if mode == NetMode::Mobile { Vec::new() } else { proxies };
+    let net = Arc::new(BulkNet { mode, proxies: resolve_proxies(proxies).await, sticky: AtomicUsize::new(0) });
+    bulk_log(&app, &match mode {
+        NetMode::Direct => format!("Start: {total} accounts, direct connection"),
+        NetMode::Rotate => format!("Start: {total} accounts, rotate across {} proxies", net.proxies.len()),
+        NetMode::Sticky => format!("Start: {total} accounts, sticky proxy ({} in list)", net.proxies.len()),
+        NetMode::Mobile => format!("Start: {total} accounts, mobile data mode (1 window, IP {})", public_ip().await.as_deref().unwrap_or("?")),
+    });
 
     let queue: BulkQueue =
         Arc::new(Mutex::new(credentials.into_iter().enumerate().map(|(i, c)| (i, c, 0usize)).collect()));
@@ -1207,8 +1356,8 @@ pub async fn start_bulk_login(
         let app = app.clone();
         let queue = queue.clone();
         let data_root = data_root.clone();
-        let proxies = proxies.clone();
-        tauri::async_runtime::spawn(run_bulk_slot(app, queue, data_root, export_cookies, gap_ms, proxies));
+        let net = net.clone();
+        tauri::async_runtime::spawn(run_bulk_slot(app, queue, data_root, export_cookies, gap_ms, net));
     }
 
     #[cfg(windows)]
@@ -1272,7 +1421,7 @@ pub fn focus_bulk_window(index: usize, app: AppHandle) -> AppResult<()> {
 
 /// One worker slot: pulls accounts off the queue and logs them in one at a
 /// time, so at most `concurrency` windows are ever open.
-async fn run_bulk_slot(app: AppHandle, queue: BulkQueue, data_root: PathBuf, export_cookies: bool, gap_ms: u64, proxies: Arc<Vec<Option<String>>>) {
+async fn run_bulk_slot(app: AppHandle, queue: BulkQueue, data_root: PathBuf, export_cookies: bool, gap_ms: u64, net: Arc<BulkNet>) {
     let ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
     loop {
@@ -1286,12 +1435,13 @@ async fn run_bulk_slot(app: AppHandle, queue: BulkQueue, data_root: PathBuf, exp
             None => break,
         };
 
-        // This attempt's proxy (if any): assigned one, rotated by attempt.
-        let proxy_arg = if proxies.is_empty() {
-            None
-        } else {
-            proxies[(index + attempt) % proxies.len()].clone()
-        };
+        // This attempt's proxy (if any), per the run's mode.
+        let proxy_idx = net.pick(index, attempt);
+        let proxy_arg = proxy_idx.and_then(|i| net.proxies[i].arg.clone());
+        let can_retry = net.mode != NetMode::Direct && attempt + 1 < net.max_tries();
+        if let Some(i) = proxy_idx {
+            bulk_log(&app, &format!("{}: via {}", cred.username, net.proxies[i].label));
+        }
         let browser_args = match &proxy_arg {
             Some(p) => format!("{} --proxy-server={}", NO_THROTTLE_ARGS, p),
             None => NO_THROTTLE_ARGS.to_string(),
@@ -1300,7 +1450,10 @@ async fn run_bulk_slot(app: AppHandle, queue: BulkQueue, data_root: PathBuf, exp
         let label = format!("bulk-login-{}", index);
         emit_progress(&app, index, &cred.username, "filling", "Opening login window…");
 
-        let dir = data_root.join(index.to_string());
+        // A retry reuses the label and changes --proxy-server: wait for the old
+        // window, and use a fresh data dir (WebView2 won't reopen one with new args).
+        close_window_and_wait(&app, &label).await;
+        let dir = data_root.join(format!("{index}-{attempt}"));
         if let Err(e) = std::fs::create_dir_all(&dir) {
             emit_progress(&app, index, &cred.username, "error", &format!("data dir: {}", e));
             continue;
@@ -1334,6 +1487,8 @@ async fn run_bulk_slot(app: AppHandle, queue: BulkQueue, data_root: PathBuf, exp
         let started = Instant::now();
         let mut last = String::new();
         let mut challenged = String::new(); // captcha/locked/twostep seen before harvest
+        let mut captcha_since: Option<Instant> = None;
+        let mut waiting_logged = false;
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(700)).await;
 
@@ -1372,6 +1527,7 @@ async fn run_bulk_slot(app: AppHandle, queue: BulkQueue, data_root: PathBuf, exp
                     "locked" => ("locked", "Face-lock — confirm in the window"),
                     "twostep" => ("twostep", "2-step — enter code in the window"),
                     "error" => ("error", "Incorrect username or password"),
+                    "blocked" => ("filling", "Roblox error — IP/proxy refused"),
                     _ => ("filling", "Signing in…"),
                 };
                 emit_progress(&app, index, &cred.username, st, msg);
@@ -1399,11 +1555,45 @@ async fn run_bulk_slot(app: AppHandle, queue: BulkQueue, data_root: PathBuf, exp
                 break;
             }
 
+            // "An unknown error occurred": Roblox refuses this IP/proxy. Retry the
+            // same account on the next route; nothing left → fail, don't hang.
+            if code == "blocked" && !cookie_present(&w) {
+                tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                let _ = w.close();
+                if can_retry {
+                    retry_on_next_route(&app, &net, &queue, index, &cred, attempt, proxy_idx, "Roblox unknown error").await;
+                } else {
+                    let route = proxy_idx.map(|i| net.proxies[i].label.clone()).unwrap_or_else(|| "this IP".into());
+                    bulk_log(&app, &format!("{}: Roblox unknown error on {route} — no other route left", cred.username));
+                    emit_progress(&app, index, &cred.username, "error", "Roblox unknown error — IP/proxy refused. Try another proxy or Mobile data.");
+                }
+                break;
+            }
+
             // Wrong password is terminal; let the user glimpse it, then move on.
             if code == "error" {
                 tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
                 let _ = w.close();
                 break;
+            }
+
+            // Captcha that doesn't pass by itself: retry this account on the next
+            // route (proxy / new IP). Out of routes → wait for a manual solve.
+            if code == "captcha" {
+                let since = *captcha_since.get_or_insert_with(Instant::now);
+                if since.elapsed().as_secs() >= CAPTCHA_ROTATE_SECS && !cookie_present(&w) {
+                    if can_retry {
+                        let _ = w.close();
+                        retry_on_next_route(&app, &net, &queue, index, &cred, attempt, proxy_idx, "captcha").await;
+                        break;
+                    }
+                    if net.mode != NetMode::Direct && !waiting_logged {
+                        waiting_logged = true;
+                        bulk_log(&app, &format!("{}: captcha on every route tried — solve it in the window", cred.username));
+                    }
+                }
+            } else {
+                captcha_since = None;
             }
 
             // Give up on a stuck manual challenge after the timeout.
@@ -1422,12 +1612,12 @@ async fn run_bulk_slot(app: AppHandle, queue: BulkQueue, data_root: PathBuf, exp
                 && started.elapsed().as_secs() > STUCK_PROXY_TIMEOUT_SECS
             {
                 let _ = w.close();
-                if attempt + 1 < proxies.len() {
-                    emit_progress(&app, index, &cred.username, "queued", "Proxy stuck — retrying with next proxy…");
-                    if let Ok(mut q) = queue.lock() {
-                        q.push_back((index, cred.clone(), attempt + 1));
-                    }
+                if can_retry {
+                    retry_on_next_route(&app, &net, &queue, index, &cred, attempt, proxy_idx, "proxy dead (no page in 60s)").await;
                 } else {
+                    if let Some(i) = proxy_idx {
+                        bulk_log(&app, &format!("{}: proxy dead on {} — all proxies tried, giving up", cred.username, net.proxies[i].label));
+                    }
                     emit_progress(&app, index, &cred.username, "error", "All proxies failed or timed out");
                 }
                 break;

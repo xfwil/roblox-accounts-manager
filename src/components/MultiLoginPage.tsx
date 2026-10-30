@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { Icon } from './Icon';
-import { startBulkLogin, cancelBulkLogin, focusBulkWindow, type Credential } from '../api/login';
+import { startBulkLogin, cancelBulkLogin, focusBulkWindow, type Credential, type NetMode } from '../api/login';
 import './MultiLoginPage.css';
 
 type RowState =
@@ -19,6 +19,7 @@ interface Row {
 interface BulkProgress { index: number; username: string; state: RowState; message: string }
 interface BulkThumb { index: number; dataUrl: string }
 interface BulkCookie { index: number; cookie: string }
+interface BulkLog { time: string; text: string }
 
 const NEEDS_YOU: RowState[] = ['captcha', 'locked', 'twostep'];
 // A login-time captcha is routine (everyone gets it) — it is NOT an account
@@ -52,6 +53,8 @@ export function MultiLoginPage({ onProgress }: { onProgress: () => void }) {
   const [running, setRunning] = useState(false);
   const [rows, setRows] = useState<Record<number, Row>>({});
   const [exportCookies, setExportCookies] = useState(false);
+  const [netMode, setNetMode] = useState<NetMode>('rotate');
+  const [log, setLog] = useState<BulkLog[]>([]);
   const [exports, setExports] = useState<Record<number, string>>({}); // index -> "user:pass:cookie"
   const [copied, setCopied] = useState(false);
   const onProgressRef = useRef(onProgress);
@@ -81,6 +84,7 @@ export function MultiLoginPage({ onProgress }: { onProgress: () => void }) {
         const cred = parsedRef.current[index];
         if (cred) setExports((prev) => ({ ...prev, [index]: `${cred.username}:${cred.password}:${cookie}` }));
       }),
+      listen<BulkLog>('bulk-log', (e) => setLog((prev) => [...prev.slice(-199), e.payload])),
       listen('bulk-login-finished', () => setRunning(false)),
     ];
     return () => { unsubs.forEach((u) => u.then((fn) => fn())); };
@@ -95,11 +99,12 @@ export function MultiLoginPage({ onProgress }: { onProgress: () => void }) {
     parsed.forEach((c, i) => { initial[i] = { username: c.username, state: 'queued', message: 'Waiting…' }; });
     setRows(initial);
     setExports({});
+    setLog([]);
     setCopied(false);
     setRunning(true);
     const proxies = proxyText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
     try {
-      await startBulkLogin(parsed, concurrency, exportCookies, submitDelay * 1000, proxies);
+      await startBulkLogin(parsed, netMode === 'mobile' ? 1 : concurrency, exportCookies, submitDelay * 1000, proxies, netMode);
     } catch (err) {
       setRunning(false);
       setRows((prev) => ({ ...prev, [-1]: { username: '—', state: 'error', message: String(err) } }));
@@ -139,7 +144,16 @@ export function MultiLoginPage({ onProgress }: { onProgress: () => void }) {
               disabled={running}
             />
           </label>
-          <label className="ml-field">
+          <label className="ml-conc ml-mode">
+            <span>On captcha / dead proxy</span>
+            <select value={netMode} onChange={(e) => setNetMode(e.target.value as NetMode)} disabled={running}>
+              <option value="rotate">Rotate proxy · each account its own, next on failure</option>
+              <option value="sticky">Sticky proxy · one proxy for all until it fails</option>
+              <option value="mobile">Mobile data · pause so I can toggle data (new IP)</option>
+            </select>
+          </label>
+          {netMode === 'mobile' && <p className="ml-note"><Icon name="shield" size={14} /> On captcha RAM pauses and waits until your IP changes, then retries the same account. Runs 1 window at a time; proxies are ignored.</p>}
+          {netMode !== 'mobile' && <label className="ml-field">
             <span>Proxies <small>· optional · 1 per line</small></span>
             <textarea
               className="ml-proxy"
@@ -150,11 +164,11 @@ export function MultiLoginPage({ onProgress }: { onProgress: () => void }) {
               disabled={running}
               rows={3}
             />
-          </label>
+          </label>}
           <div className="ml-controls">
             <label className="ml-conc">
               <span>Parallel windows</span>
-              <select value={concurrency} onChange={(e) => setConcurrency(Number(e.target.value))} disabled={running}>
+              <select value={netMode === 'mobile' ? 1 : concurrency} onChange={(e) => setConcurrency(Number(e.target.value))} disabled={running || netMode === 'mobile'}>
                 {[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n}</option>)}
               </select>
             </label>
@@ -225,6 +239,11 @@ export function MultiLoginPage({ onProgress }: { onProgress: () => void }) {
                 </article>
                 );
               })}
+            </div>
+          )}
+          {log.length > 0 && (
+            <div className="ml-log" aria-label="Network log">
+              {log.map((l, i) => <div key={i}><time>{l.time}</time> {l.text}</div>)}
             </div>
           )}
         </section>
