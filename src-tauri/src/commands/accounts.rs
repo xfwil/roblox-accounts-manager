@@ -131,7 +131,14 @@ pub async fn update_account(
         account.alias = if alias.is_empty() { None } else { Some(alias) };
     }
     if let Some(group) = group {
-        account.group = if group.is_empty() { None } else { Some(group) };
+        // Keep the multi-group list in sync with a single-group edit.
+        if group.is_empty() {
+            account.group = None;
+            account.groups = Vec::new();
+        } else {
+            account.group = Some(group.clone());
+            account.groups = vec![group];
+        }
     }
     if let Some(desc) = description {
         account.description = if desc.is_empty() { None } else { Some(desc) };
@@ -341,6 +348,40 @@ pub async fn get_groups(state: State<'_, AppState>) -> AppResult<Vec<String>> {
     let store = state.store.lock().map_err(|e| {
         crate::error::AppError::Other(format!("Lock poisoned: {}", e))
     })?;
+    Ok(store.get_groups())
+}
+
+/// Set an account's full group membership (multi-group).
+#[tauri::command]
+pub async fn set_account_groups(id: String, groups: Vec<String>, state: State<'_, AppState>) -> AppResult<AccountView> {
+    let uuid = Uuid::parse_str(&id)
+        .map_err(|e| crate::error::AppError::Other(format!("Invalid UUID: {}", e)))?;
+    let mut store = state.store.lock().map_err(|e| crate::error::AppError::Other(format!("Lock poisoned: {}", e)))?;
+    store.set_account_groups(&uuid, groups)?;
+    Ok(store.get_account(&uuid)?.to_view())
+}
+
+/// Create an empty group.
+#[tauri::command]
+pub async fn create_group(name: String, state: State<'_, AppState>) -> AppResult<Vec<String>> {
+    let mut store = state.store.lock().map_err(|e| crate::error::AppError::Other(format!("Lock poisoned: {}", e)))?;
+    store.create_group(&name)?;
+    Ok(store.get_groups())
+}
+
+/// Rename a group across all accounts.
+#[tauri::command]
+pub async fn rename_group(from: String, to: String, state: State<'_, AppState>) -> AppResult<Vec<String>> {
+    let mut store = state.store.lock().map_err(|e| crate::error::AppError::Other(format!("Lock poisoned: {}", e)))?;
+    store.rename_group(&from, &to)?;
+    Ok(store.get_groups())
+}
+
+/// Delete a group and remove it from all accounts.
+#[tauri::command]
+pub async fn delete_group(name: String, state: State<'_, AppState>) -> AppResult<Vec<String>> {
+    let mut store = state.store.lock().map_err(|e| crate::error::AppError::Other(format!("Lock poisoned: {}", e)))?;
+    store.delete_group(&name)?;
     Ok(store.get_groups())
 }
 

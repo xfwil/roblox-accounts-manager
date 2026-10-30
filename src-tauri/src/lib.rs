@@ -179,6 +179,10 @@ pub fn run() {
             commands::check_captcha,
             commands::reorder_accounts,
             commands::get_groups,
+            commands::set_account_groups,
+            commands::create_group,
+            commands::rename_group,
+            commands::delete_group,
             commands::get_account_count,
             // Game launching & servers
             commands::join_game,

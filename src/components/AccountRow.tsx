@@ -169,8 +169,8 @@ export function AccountRow({
         )}
       </td>
       <td className="col-group">
-        {account.group ? (
-          <span className="badge">{account.group}</span>
+        {account.groups?.length ? (
+          <span className="group-badges">{account.groups.map(g => <span key={g} className="badge">{g}</span>)}</span>
         ) : (
           <span className="text-muted">-</span>
         )}

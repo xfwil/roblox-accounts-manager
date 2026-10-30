@@ -9,6 +9,7 @@ import { AddAccountDialog } from './components/AddAccountDialog';
 import { JoinGameDialog } from './components/JoinGameDialog';
 import { ServerBrowserPage } from './components/ServerBrowserPage';
 import { ReportsPage } from './components/ReportsPage';
+import { GroupsPage } from './components/GroupsPage';
 import { AccountUtilsDialog } from './components/AccountUtilsDialog';
 import { ImportExportDialog } from './components/ImportExportDialog';
 import { SettingsDialog } from './components/SettingsDialog';
@@ -32,14 +33,15 @@ function App() {
     removeAccount,
     refreshAccount,
     refreshAll,
-    updateAccount
+    updateAccount,
+    setAccountGroups
   } = useAccounts();
 
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isJoinGameOpen, setIsJoinGameOpen] = useState(false);
   const [isAccountUtilsOpen, setIsAccountUtilsOpen] = useState(false);
   const [isImportExportOpen, setIsImportExportOpen] = useState(false);
-  const [view, setView] = useState<'accounts' | 'multilogin' | 'servers' | 'reports'>('reports');
+  const [view, setView] = useState<'accounts' | 'multilogin' | 'servers' | 'reports' | 'groups'>('reports');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([]);
@@ -136,6 +138,19 @@ function App() {
     fetchGroups();
   }, [accounts]);
 
+  // Group management (Groups page)
+  const handleCreateGroup = useCallback(async (name: string) => {
+    try { setGroups(await api.createGroup(name)); } catch (err) { setNotice(`Create group failed: ${String(err)}`); }
+  }, []);
+  const handleRenameGroup = useCallback(async (from: string, to: string) => {
+    try { setGroups(await api.renameGroup(from, to)); await fetchAccounts(); setSelectedGroup(g => g === from ? to : g); }
+    catch (err) { setNotice(`Rename group failed: ${String(err)}`); }
+  }, [fetchAccounts]);
+  const handleDeleteGroup = useCallback(async (name: string) => {
+    try { setGroups(await api.deleteGroup(name)); await fetchAccounts(); setSelectedGroup(g => g === name ? 'All' : g); }
+    catch (err) { setNotice(`Delete group failed: ${String(err)}`); }
+  }, [fetchAccounts]);
+
   // Actions triggered from context menu
   const handleJoinGame = (accountId: string) => {
     setSelectedAccountId(accountId);
@@ -166,10 +181,10 @@ function App() {
 
   return (
     <div className="app-container">
-      <WorkspaceNav groups={groups} selectedGroup={selectedGroup} onGroup={(g) => { setSelectedGroup(g); setView('accounts'); }} count={accounts.length} onServers={() => setView('servers')} onReports={() => setView('reports')} onTransfer={() => setIsImportExportOpen(true)} onSettings={() => setIsSettingsOpen(true)} onMultiLogin={() => setView('multilogin')} activeView={view} />
+      <WorkspaceNav groups={groups} selectedGroup={selectedGroup} onGroup={(g) => { setSelectedGroup(g); setView('accounts'); }} onGroups={() => setView('groups')} count={accounts.length} onServers={() => setView('servers')} onReports={() => setView('reports')} onTransfer={() => setIsImportExportOpen(true)} onSettings={() => setIsSettingsOpen(true)} onMultiLogin={() => setView('multilogin')} activeView={view} />
       <div className="workspace-shell">
       <header className="workspace-header">
-        <div className="workspace-breadcrumb">Workspace <span>/</span> <strong>{view === 'multilogin' ? 'Multi-login' : view === 'servers' ? 'Server browser' : view === 'reports' ? 'Reports' : selectedGroup === 'All' ? 'All accounts' : selectedGroup}</strong></div>
+        <div className="workspace-breadcrumb">Workspace <span>/</span> <strong>{view === 'multilogin' ? 'Multi-login' : view === 'servers' ? 'Server browser' : view === 'reports' ? 'Reports' : view === 'groups' ? 'Groups' : selectedGroup === 'All' ? 'All accounts' : selectedGroup}</strong></div>
         <span className="workspace-summary"><i className="summary-dot" />{Array.from(presenceMap.values()).filter(p => p.presenceType > 0).length} online</span>
       </header>
       {/* Kept mounted (hidden when inactive) so an in-progress bulk run, its
@@ -177,6 +192,7 @@ function App() {
       <main className="workspace-main" style={{ display: view === 'multilogin' ? undefined : 'none' }}><MultiLoginPage onProgress={fetchAccounts} /></main>
       <main className="workspace-main" style={{ display: view === 'servers' ? undefined : 'none' }}><ServerBrowserPage selectedAccountIds={selectedAccountIds} /></main>
       {view === 'reports' && <main className="workspace-main"><ReportsPage accounts={accounts} onRefresh={refreshAll} onCopyCookies={handleCopyCookie} refreshing={accountsLoading} /></main>}
+      {view === 'groups' && <main className="workspace-main"><GroupsPage accounts={accounts} groups={groups} onCreate={handleCreateGroup} onRename={handleRenameGroup} onDelete={handleDeleteGroup} onOpenGroup={(g) => { setSelectedGroup(g); setView('accounts'); }} /></main>}
       {/* Hidden, not unmounted, so the account selection survives visiting the server browser */}
       <main className="workspace-main" style={{ display: view === 'accounts' ? undefined : 'none' }}>
       <section className="workspace-heading" aria-label="Account overview">
@@ -199,6 +215,7 @@ function App() {
         presenceMap={presenceMap}
         onRefresh={refreshAccount}
         onUpdate={updateAccount}
+        onSetGroups={setAccountGroups}
         onRemove={removeAccount}
         onJoinGame={handleJoinGame}
         onAccountUtils={handleAccountUtils}

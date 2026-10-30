@@ -35,6 +35,7 @@ interface AccountListProps {
     description?: string;
     fields?: Record<string, string>;
   }) => Promise<void>;
+  onSetGroups: (id: string, groups: string[]) => Promise<void>;
   onRemove: (id: string) => Promise<void>;
   onJoinGame: (accountId: string) => void;
   onAccountUtils: (accountId: string) => void;
@@ -53,6 +54,7 @@ export function AccountList({
   presenceMap,
   onRefresh,
   onUpdate,
+  onSetGroups,
   onRemove,
   onJoinGame,
   onAccountUtils,
@@ -74,7 +76,7 @@ export function AccountList({
 
   // Group assignment dialog state
   const [groupDialogAccountId, setGroupDialogAccountId] = useState<string | null>(null);
-  const [groupDialogValue, setGroupDialogValue] = useState('');
+  const [groupDialogSelected, setGroupDialogSelected] = useState<string[]>([]);
   const [groupDialogNewGroup, setGroupDialogNewGroup] = useState('');
   
   // Context menu state
@@ -98,7 +100,7 @@ export function AccountList({
   // Filter and sort accounts
   const filteredAccounts = useMemo(() => {
     const filtered = accounts.filter(acc => {
-      if (selectedGroup !== 'All' && acc.group !== selectedGroup) {
+      if (selectedGroup !== 'All' && !(acc.groups ?? []).includes(selectedGroup)) {
         return false;
       }
       
@@ -235,7 +237,10 @@ export function AccountList({
     setBusy(true);
     setActionError(null);
     try {
-      await onUpdate(groupDialogAccountId, { group: (groupDialogNewGroup || groupDialogValue).trim() });
+      const selected = [...groupDialogSelected];
+      const extra = groupDialogNewGroup.trim();
+      if (extra && !selected.includes(extra)) selected.push(extra);
+      await onSetGroups(groupDialogAccountId, selected);
       setGroupDialogAccountId(null);
     } catch (err) {
       setActionError(String(err));
@@ -390,7 +395,7 @@ export function AccountList({
           onEditAlias={() => setEditingAliasId(contextMenu.accountId)}
           onSetGroup={() => {
             const account = accounts.find(a => a.id === contextMenu.accountId);
-            setGroupDialogValue(account?.group || '');
+            setGroupDialogSelected(account?.groups ?? []);
             setGroupDialogNewGroup('');
             setGroupDialogAccountId(contextMenu.accountId);
           }}
@@ -421,28 +426,25 @@ export function AccountList({
 
       {/* Group Assignment Dialog */}
       {groupDialogAccountId && (
-        <Modal title="Organize account" description="Choose a group or create a new one." onClose={() => setGroupDialogAccountId(null)}>
+        <Modal title="Organize account" description="Pick one or more groups, or create a new one." onClose={() => setGroupDialogAccountId(null)}>
             <div className="dialog-body">
               {actionError && <p className="alert-error" role="alert">{actionError}</p>}
               {groups.length > 0 && (
                 <div className="form-group">
-                  <label>Existing Groups</label>
+                  <label>Groups <small>· {groupDialogSelected.length} selected</small></label>
                   <div className="group-chips">
-                    <button
-                      className={`group-chip ${groupDialogValue === '' ? 'active' : ''}`}
-                      onClick={() => { setGroupDialogValue(''); setGroupDialogNewGroup(''); }}
-                    >
-                      No Group
-                    </button>
-                    {groups.map(g => (
-                      <button
-                        key={g}
-                        className={`group-chip ${groupDialogValue === g ? 'active' : ''}`}
-                        onClick={() => { setGroupDialogValue(g); setGroupDialogNewGroup(''); }}
-                      >
-                        {g}
-                      </button>
-                    ))}
+                    {groups.map(g => {
+                      const on = groupDialogSelected.includes(g);
+                      return (
+                        <button
+                          key={g}
+                          className={`group-chip ${on ? 'active' : ''}`}
+                          onClick={() => setGroupDialogSelected(prev => on ? prev.filter(x => x !== g) : [...prev, g])}
+                        >
+                          {on ? '✓ ' : ''}{g}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -453,10 +455,7 @@ export function AccountList({
                   className="input-field"
                   placeholder="New group name..."
                   value={groupDialogNewGroup}
-                  onChange={e => {
-                    setGroupDialogNewGroup(e.target.value);
-                    if (e.target.value) setGroupDialogValue(e.target.value);
-                  }}
+                  onChange={e => setGroupDialogNewGroup(e.target.value)}
                   onKeyDown={e => {
                     if (e.key === 'Enter') {
                       e.preventDefault();

@@ -16,6 +16,8 @@ pub struct AccountStore {
     accounts: HashMap<Uuid, Account>,
     /// In-memory cache of secrets
     secrets: HashMap<Uuid, AccountSecret>,
+    /// Canonical group names (lets empty groups persist for the Groups page).
+    group_names: Vec<String>,
 }
 
 impl AccountStore {
@@ -28,6 +30,7 @@ impl AccountStore {
             encryption_key,
             accounts: HashMap::new(),
             secrets: HashMap::new(),
+            group_names: Vec::new(),
         };
 
         store.load()?;
@@ -42,6 +45,11 @@ impl AccountStore {
     /// Path to the secrets JSON file
     fn secrets_path(&self) -> PathBuf {
         self.data_dir.join("secrets.json")
+    }
+
+    /// Path to the group-names registry file
+    fn groups_path(&self) -> PathBuf {
+        self.data_dir.join("groups.json")
     }
 
     /// Load accounts and secrets from disk
@@ -62,6 +70,20 @@ impl AccountStore {
             self.secrets = secrets.into_iter().map(|s| (s.account_id, s)).collect();
         }
 
+        // Load the group registry, or seed it from existing account memberships
+        // the first time (so pre-multi-group data keeps all its groups).
+        let groups_path = self.groups_path();
+        if groups_path.exists() {
+            let data = std::fs::read_to_string(&groups_path)?;
+            self.group_names = serde_json::from_str(&data).unwrap_or_default();
+        } else {
+            let mut set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+            for a in self.accounts.values() {
+                for g in a.effective_groups() { set.insert(g); }
+            }
+            self.group_names = set.into_iter().collect();
+        }
+
         Ok(())
     }
 
@@ -76,6 +98,10 @@ impl AccountStore {
         let secrets: Vec<&AccountSecret> = self.secrets.values().collect();
         let data = serde_json::to_string_pretty(&secrets)?;
         std::fs::write(self.secrets_path(), data)?;
+
+        // Save the group registry
+        let data = serde_json::to_string_pretty(&self.group_names)?;
+        std::fs::write(self.groups_path(), data)?;
 
         Ok(())
     }
@@ -150,6 +176,7 @@ impl AccountStore {
                 avatar_url: account.avatar_url,
                 // Preserve user-set metadata
                 group: existing.group,
+                groups: existing.groups,
                 alias: existing.alias,
                 sort_order: existing.sort_order,
                 last_used: existing.last_used,
@@ -288,16 +315,85 @@ impl AccountStore {
         Ok(())
     }
 
-    /// Get all unique group names
+    /// Get all unique group names — the registry unioned with every account's
+    /// live membership, so legacy groups and empty groups both show up.
     pub fn get_groups(&self) -> Vec<String> {
-        let mut groups: Vec<String> = self
-            .accounts
-            .values()
-            .filter_map(|a| a.group.clone())
-            .collect();
-        groups.sort();
+        let mut set: std::collections::BTreeSet<String> = self.group_names.iter().cloned().collect();
+        for a in self.accounts.values() {
+            for g in a.effective_groups() { set.insert(g); }
+        }
+        set.into_iter().collect()
+    }
+
+    /// Set an account's full group membership. `group` (primary) is kept in sync
+    /// with the first entry for features that still read a single group. New
+    /// names are added to the registry.
+    pub fn set_account_groups(&mut self, id: &Uuid, mut groups: Vec<String>) -> AppResult<()> {
+        groups.retain(|g| !g.trim().is_empty());
+        groups = groups.into_iter().map(|g| g.trim().to_string()).collect();
         groups.dedup();
-        groups
+        if let Some(acc) = self.accounts.get_mut(id) {
+            acc.group = groups.first().cloned();
+            acc.groups = groups.clone();
+        } else {
+            return Err(AppError::AccountNotFound(id.to_string()));
+        }
+        for g in groups {
+            if !self.group_names.contains(&g) { self.group_names.push(g); }
+        }
+        self.save()?;
+        Ok(())
+    }
+
+    /// Create an empty group in the registry (no-op if it already exists).
+    pub fn create_group(&mut self, name: &str) -> AppResult<()> {
+        let name = name.trim();
+        if !name.is_empty() && !self.group_names.iter().any(|g| g == name) {
+            self.group_names.push(name.to_string());
+            self.save()?;
+        }
+        Ok(())
+    }
+
+    /// Rename a group across the registry and every account that belongs to it.
+    pub fn rename_group(&mut self, from: &str, to: &str) -> AppResult<()> {
+        let to = to.trim();
+        if from.is_empty() || to.is_empty() || from == to { return Ok(()); }
+        for g in self.group_names.iter_mut() { if g == from { *g = to.to_string(); } }
+        self.group_names.sort();
+        self.group_names.dedup();
+        self.group_names.retain(|g| g != from);
+        if !self.group_names.iter().any(|g| g == to) { self.group_names.push(to.to_string()); }
+        for acc in self.accounts.values_mut() {
+            let mut changed = false;
+            for g in acc.groups.iter_mut() { if g == from { *g = to.to_string(); changed = true; } }
+            if changed { acc.groups.dedup(); }
+            // Legacy single-group accounts that never got a `groups` list.
+            if acc.groups.is_empty() && acc.group.as_deref() == Some(from) {
+                acc.group = Some(to.to_string());
+            } else if changed {
+                acc.group = acc.groups.first().cloned();
+            }
+        }
+        self.save()?;
+        Ok(())
+    }
+
+    /// Delete a group from the registry and remove it from every account.
+    pub fn delete_group(&mut self, name: &str) -> AppResult<()> {
+        self.group_names.retain(|g| g != name);
+        for acc in self.accounts.values_mut() {
+            let had = acc.groups.iter().any(|g| g == name);
+            acc.groups.retain(|g| g != name);
+            if had {
+                acc.group = acc.groups.first().cloned();
+            } else if acc.groups.is_empty() && acc.group.as_deref() == Some(name) {
+                // Legacy single-group account tagged only via `group`.
+                acc.group = None;
+            }
+        }
+        self.save()?;
+        Ok(())
     }
 
     /// Get the number of accounts

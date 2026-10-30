@@ -13,7 +13,13 @@ pub struct Account {
     pub robux: Option<i64>,
     pub is_premium: Option<bool>,
     pub avatar_url: Option<String>,
+    /// Primary group — kept in sync with `groups[0]` for backward compatibility
+    /// with features that read a single group (reports, import/export, nexus).
     pub group: Option<String>,
+    /// Full group membership. Accounts saved before multi-group have this empty
+    /// and only `group` set; `effective_groups()` bridges the two.
+    #[serde(default)]
+    pub groups: Vec<String>,
     pub alias: Option<String>,
     pub sort_order: i32,
     pub last_used: Option<DateTime<Utc>>,
@@ -43,6 +49,7 @@ pub struct AccountView {
     pub is_premium: Option<bool>,
     pub avatar_url: Option<String>,
     pub group: Option<String>,
+    pub groups: Vec<String>,
     pub alias: Option<String>,
     pub sort_order: i32,
     pub last_used: Option<DateTime<Utc>>,
@@ -51,6 +58,18 @@ pub struct AccountView {
 }
 
 impl Account {
+    /// Normalized group membership: the explicit `groups` list, or the legacy
+    /// single `group` as a one-item list for accounts saved before multi-group.
+    pub fn effective_groups(&self) -> Vec<String> {
+        if !self.groups.is_empty() {
+            self.groups.clone()
+        } else if let Some(g) = &self.group {
+            vec![g.clone()]
+        } else {
+            Vec::new()
+        }
+    }
+
     pub fn new(username: String) -> Self {
         Self {
             id: Uuid::new_v4(),
@@ -62,6 +81,7 @@ impl Account {
             is_premium: None,
             avatar_url: None,
             group: None,
+            groups: Vec::new(),
             alias: None,
             sort_order: 0,
             last_used: None,
@@ -81,6 +101,7 @@ impl Account {
             is_premium: self.is_premium,
             avatar_url: self.avatar_url.clone(),
             group: self.group.clone(),
+            groups: self.effective_groups(),
             alias: self.alias.clone(),
             sort_order: self.sort_order,
             last_used: self.last_used,

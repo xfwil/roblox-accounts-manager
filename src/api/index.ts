@@ -7,6 +7,10 @@ export {
   refreshAccount,
   reorderAccounts,
   getGroups,
+  setAccountGroups,
+  createGroup,
+  renameGroup,
+  deleteGroup,
   getAccountCount,
 } from './accounts';
 
