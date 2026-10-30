@@ -112,6 +112,7 @@ function App() {
       locked: 'Account locked: Roblox wants a human check. Confirm it in the login window.',
       twostep: '2-step verification required — enter your code in the login window.',
       error: 'Login failed: incorrect username or password.',
+      blocked: 'Roblox said "unknown error": this IP is being refused. Wait a bit or change IP (toggle mobile data), then try again.',
     };
     const unlisten = listen<{ label: string; state: string }>('login-state', (event) => {
       const msg = messages[event.payload.state];
