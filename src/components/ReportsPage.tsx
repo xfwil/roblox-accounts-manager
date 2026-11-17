@@ -14,7 +14,7 @@ interface ReportsPageProps {
 
 export function ReportsPage({ accounts, onRefresh, onCopyCookies, refreshing }: ReportsPageProps) {
   const [group, setGroup] = useState('All');
-  const { sort, th } = useSort<'total' | 'username' | 'group' | 'facelock' | 'banned' | 'moderated' | 'cookie_dead' | 'last' | 'now'>('total');
+  const { sort, th } = useSort<'total' | 'username' | 'group' | 'facelock' | 'banned' | 'moderated' | 'cookie_dead' | 'captcha' | 'last' | 'now'>('total');
   const groups = useMemo(() => [...new Set(accounts.map(a => a.group || 'Ungrouped'))].sort(), [accounts]);
   const list = group === 'All' ? accounts : accounts.filter(a => (a.group || 'Ungrouped') === group);
 
@@ -97,9 +97,10 @@ export function ReportsPage({ accounts, onRefresh, onCopyCookies, refreshing }: 
                   {th('banned', 'Banned', 'num')}
                   {th('moderated', 'Moderated', 'num')}
                   {th('cookie_dead', 'Cookie dead', 'num')}
-                  {th('last', 'Last event')}
-                  {th('now', 'Now')}
-                  <th aria-label="Actions" />
+                  {th('captcha', 'Captcha', 'num')}
+                  {th('last', 'Last activity')}
+                  {th('now', 'Status')}
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
