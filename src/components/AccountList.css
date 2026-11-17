@@ -8,7 +8,7 @@
 .account-table {
   width: 100%;
   border-collapse: collapse;
-  table-layout: auto;
+  table-layout: fixed;
 }
 
 .account-table th {

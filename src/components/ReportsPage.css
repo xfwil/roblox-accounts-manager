@@ -22,16 +22,17 @@
 .reports-table-card h2 { margin: 0; font-size: 14px; color: var(--text-primary); }
 .reports-actions { display: flex; gap: 6px; }
 .reports-actions .btn { display: inline-flex; align-items: center; gap: 6px; }
-.reports-row-actions { white-space: nowrap; text-align: right; }
+.reports-row-actions { white-space: nowrap; text-align: right; width: 70px; padding-right: 10px !important; }
 .reports-table-card h2 span { color: var(--text-muted); font-weight: 500; margin-left: 4px; }
 .reports-empty { margin: 0; padding: 24px 16px; color: var(--text-muted); font-size: 13px; }
 .reports-table-scroll { flex: 1; min-height: 0; overflow: auto; }
 .reports-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .reports-table th {
   position: sticky; top: 0; background: var(--bg-panel); text-align: left;
-  padding: 8px 16px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em;
+  padding: 8px 12px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em;
   color: var(--text-muted); border-bottom: 1px solid var(--border-color);
 }
-.reports-table td { padding: 10px 16px; border-bottom: 1px solid var(--border-color); color: var(--text-primary); }
+.reports-table td { padding: 10px 12px; border-bottom: 1px solid var(--border-color); color: var(--text-primary); }
 .reports-table td small { color: var(--text-muted); }
 .reports-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.reports-table th:last-child { width: 70px; }

@@ -46,8 +46,9 @@
 }
 
 .col-user {
-  width: 20%;
-  min-width: 140px;
+  width: 18%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .user-primary {
@@ -62,8 +63,9 @@
 }
 
 .col-alias {
-  width: 14%;
-  min-width: 100px;
+  width: 11%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .alias-text {
@@ -87,13 +89,13 @@
 }
 
 .col-group {
-  width: 14%;
-  min-width: 90px;
+  width: 11%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .col-robux {
-  width: 10%;
-  min-width: 80px;
+  width: 8%;
   font-family: var(--font-mono);
   font-size: 13px;
 }
@@ -104,35 +106,40 @@
 }
 
 .col-last-used {
-  width: 12%;
-  min-width: 90px;
+  width: 10%;
   font-size: 13px;
   text-align: right;
 }
 
 .col-date-added {
-  width: 12%;
-  min-width: 90px;
+  width: 10%;
   font-size: 13px;
   text-align: right;
-  padding-right: var(--spacing-lg) !important;
 }
 
 .col-status {
-  width: 10%;
-  min-width: 92px;
+  width: 11%;
   font-size: 13px;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .col-safety {
   width: 10%;
-  min-width: 90px;
   font-size: 13px;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.row-actions {
+  width: 40px;
+  text-align: center;
 }
 
 .safety-good { color: var(--success); }
+.safety-fair { color: var(--success); }
 .safety-caution { color: #eab308; }
 .safety-atrisk { color: #f97316; }
 .safety-critical { color: #ef4444; }
