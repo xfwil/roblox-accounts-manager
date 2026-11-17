@@ -352,6 +352,7 @@ export function AccountList({
             <th className="col-status sortable-header" onClick={() => handleSort('status')}>
               <button type="button" onClick={event => { event.stopPropagation(); handleSort('status'); }}>Status{sortIndicator('status')}</button>
             </th>
+            <th className="col-safety">Safety</th>
             <th aria-label="Account actions" />
           </tr>
         </thead>

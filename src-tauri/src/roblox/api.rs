@@ -376,4 +376,58 @@ impl RobloxClient {
             .map(|s| s.to_string())
             .ok_or_else(|| AppError::RobloxApi("Failed to get CSRF token".into()))
     }
+
+    /// Fetch the account-standing meter from Roblox's Safety Dashboard.
+    /// Returns the status string ("all_good", "caution", "at_risk", "critical")
+    /// or empty string on failure.
+    pub async fn get_account_standing(&self, cookie: &str) -> String {
+        #[derive(Deserialize)]
+        struct StatusInfo { status: Option<String> }
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Standing { status_info: Option<StatusInfo> }
+
+        let resp = self
+            .client
+            .get("https://usermoderation.roblox.com/v1/account-standing")
+            .headers(Self::auth_headers(cookie))
+            .send()
+            .await;
+        match resp {
+            Ok(r) if r.status().is_success() => {
+                r.json::<Standing>().await
+                    .ok()
+                    .and_then(|s| s.status_info)
+                    .and_then(|i| i.status)
+                    .unwrap_or_default()
+            }
+            _ => String::new(),
+        }
+    }
+
+    /// Count of violations from the moderation appeal service.
+    pub async fn get_violation_count(&self, user_id: u64, cookie: &str) -> u32 {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct ViolationPage { total_count: Option<u32> }
+
+        let resp = self
+            .client
+            .get(format!(
+                "https://apis.roblox.com/moderation-appeal-service/v1/users/{}/violations?page_size=1",
+                user_id
+            ))
+            .headers(Self::auth_headers(cookie))
+            .send()
+            .await;
+        match resp {
+            Ok(r) if r.status().is_success() => {
+                r.json::<ViolationPage>().await
+                    .ok()
+                    .and_then(|p| p.total_count)
+                    .unwrap_or(0)
+            }
+            _ => 0,
+        }
+    }
 }

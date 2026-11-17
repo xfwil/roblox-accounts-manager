@@ -216,6 +216,18 @@ export function AccountRow({
         )}
         {history && <small className="status-history" title={`Problem history: ${history}`}>{history}</small>}
       </td>
+      <td className="col-safety">
+        {(() => {
+          const status = account.fields?.safety_status;
+          const vCount = account.fields?.violation_count;
+          if (!status) return <span className="text-muted">-</span>;
+          const labels: Record<string, string> = { all_good: 'All good', caution: 'Caution', at_risk: 'At risk', critical: 'Critical' };
+          const classes: Record<string, string> = { all_good: 'safety-good', caution: 'safety-caution', at_risk: 'safety-atrisk', critical: 'safety-critical' };
+          const label = labels[status] || status;
+          const suffix = vCount != null ? ` (${vCount})` : '';
+          return <span className={classes[status] || ''} title={`Safety Dashboard: ${label} — ${vCount ?? '?'} violation(s)`}>{label}{suffix}</span>;
+        })()}
+      </td>
       <td className="row-actions"><button className="btn-icon" aria-label={`Actions for ${account.username}`} onClick={e => { e.stopPropagation(); onContextMenu(e, account.id); }}><Icon name="more" /></button></td>
     </tr>
   );

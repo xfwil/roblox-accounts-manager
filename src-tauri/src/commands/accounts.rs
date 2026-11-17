@@ -40,11 +40,13 @@ pub async fn add_account(
     let user = state.roblox.get_authenticated_user(&cookie).await?;
 
     // Fetch additional info in parallel
-    let (robux, premium, avatar_url, details) = tokio::join!(
+    let (robux, premium, avatar_url, details, standing, violations) = tokio::join!(
         state.roblox.get_robux(user.id, &cookie),
         state.roblox.is_premium(user.id, &cookie),
         state.roblox.get_avatar_url(user.id),
         state.roblox.get_user_details(user.id, &cookie),
+        state.roblox.get_account_standing(&cookie),
+        state.roblox.get_violation_count(user.id, &cookie),
     );
 
     let mut store = state.store.lock().map_err(|e| {
@@ -67,6 +69,8 @@ pub async fn add_account(
         if let Ok(details) = details {
             account.description = details.description;
         }
+        if !standing.is_empty() { account.fields.insert("safety_status".into(), standing.clone()); }
+        account.fields.insert("violation_count".into(), violations.to_string());
         account.last_used = Some(chrono::Utc::now());
         // Only update group/alias if provided
         if group.is_some() { account.group = group; }
@@ -89,6 +93,8 @@ pub async fn add_account(
         if let Ok(details) = details {
             account.description = details.description;
         }
+        if !standing.is_empty() { account.fields.insert("safety_status".into(), standing); }
+        account.fields.insert("violation_count".into(), violations.to_string());
 
         let view = account.to_view();
         store.add_account(account, &cookie)?;
@@ -289,11 +295,13 @@ pub async fn refresh_account(id: String, app: tauri::AppHandle, state: State<'_,
         _ => None,
     };
 
-    let (robux, premium, avatar_url, details) = tokio::join!(
+    let (robux, premium, avatar_url, details, standing, violations) = tokio::join!(
         state.roblox.get_robux(user.id, &cookie),
         state.roblox.is_premium(user.id, &cookie),
         state.roblox.get_avatar_url(user.id),
         state.roblox.get_user_details(user.id, &cookie),
+        state.roblox.get_account_standing(&cookie),
+        state.roblox.get_violation_count(user.id, &cookie),
     );
 
     let mut store = state.store.lock().map_err(|e| {
@@ -310,6 +318,8 @@ pub async fn refresh_account(id: String, app: tauri::AppHandle, state: State<'_,
     if let Ok(details) = details {
         account.description = details.description;
     }
+    if !standing.is_empty() { account.fields.insert("safety_status".into(), standing); }
+    account.fields.insert("violation_count".into(), violations.to_string());
     store.update_account(account)?;
 
     // Refresh succeeded → cookie alive, good standing; clear stale problem

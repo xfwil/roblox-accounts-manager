@@ -125,6 +125,18 @@
   white-space: nowrap;
 }
 
+.col-safety {
+  width: 10%;
+  min-width: 90px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.safety-good { color: var(--success); }
+.safety-caution { color: #eab308; }
+.safety-atrisk { color: #f97316; }
+.safety-critical { color: #ef4444; }
+
 .text-muted {
   color: var(--text-muted);
 }
