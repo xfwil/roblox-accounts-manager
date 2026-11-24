@@ -316,10 +316,9 @@ export function AccountList({
       <span>{filteredAccounts.length} accounts{visibleSelectedIds.length > 0 && ` · ${visibleSelectedIds.length} selected`}</span>
       {visibleSelectedIds.length > 0 && <div><button className="btn btn-ghost btn-sm" disabled={busy} onClick={async () => {
         setBusy(true); setActionError(null);
-        try { await Promise.all(visibleSelectedIds.map(id => onRefresh(id))); } catch (err) { setActionError(String(err)); } finally { setBusy(false); }
+        try { await Promise.all(visibleSelectedIds.map(id => onRefresh(id))); } catch { /* error surfaced by useAccounts */ } finally { setBusy(false); }
       }}>Refresh selected</button><button className="btn btn-ghost btn-sm" onClick={() => setRemoveIds(visibleSelectedIds)}>Remove</button><button className="btn btn-ghost btn-sm" onClick={() => setSelectedIds(new Set())}>Clear</button></div>}
     </div>
-    {actionError && <p className="workspace-error" role="alert">{actionError}</p>}
     <div className="account-list-container" onClick={(e) => {
       // Portaled modals bubble React clicks through here; only react to clicks inside the table area
       if (!e.currentTarget.contains(e.target as Node)) return;

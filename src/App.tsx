@@ -63,6 +63,11 @@ function App() {
     return () => window.clearTimeout(timer);
   }, [notice]);
 
+  // Account errors go to the dismissable toast instead of a banner that sticks around.
+  useEffect(() => {
+    if (accountsError) setNotice(accountsError);
+  }, [accountsError]);
+
   const userIds = accounts.filter(a => a.user_id !== null).map(a => a.user_id as number);
   const { presenceMap } = usePresence(userIds);
 
@@ -203,7 +208,6 @@ function App() {
       <section className="account-workspace" aria-label="Managed accounts">
       <div className="library-controls"><label className="library-search"><Icon name="search" size={17} /><input placeholder="Find an account..." aria-label="Search accounts" value={searchQuery} onChange={event => setSearchQuery(event.target.value)} /></label><button className="btn btn-ghost" onClick={() => refreshAll()} disabled={accountsLoading}><span className={accountsLoading ? 'spin' : ''}><Icon name="refresh" size={16} /></span>Refresh</button></div>
       <select className="input-field compact-group-filter" aria-label="Filter accounts by group" value={selectedGroup} onChange={event => setSelectedGroup(event.target.value)}><option value="All">All groups</option>{groups.map(group => <option key={group} value={group}>{group}</option>)}</select>
-      {accountsError && accounts.length > 0 && <div className="workspace-error" role="alert">{accountsError}</div>}
 
       <AccountList
         accounts={accounts}
