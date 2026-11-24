@@ -177,7 +177,10 @@ pub async fn check_unlock(id: String, app: tauri::AppHandle, state: State<'_, Ap
         }
         return Err(crate::error::AppError::InvalidCookie("Cookie is invalid or expired".into()));
     }
-    let message = crate::commands::apply_unlock_result(&app, uuid, challenge.as_deref(), status, true)
+    // 2xx alone isn't proof of unlock (see refresh_account): confirm with a re-check.
+    let unlocked = challenge.is_none() && (200..300).contains(&status)
+        && state.roblox.get_authenticated_user(&cookie).await.is_ok();
+    let message = crate::commands::apply_unlock_result(&app, uuid, challenge.as_deref(), status, unlocked)
         .unwrap_or_else(|| format!("{username}: no challenge (HTTP {status}). {}", body.chars().take(160).collect::<String>()));
     use tauri::Emitter;
     let _ = app.emit("browser-cookie", serde_json::json!({ "saved": true, "message": message }));
@@ -279,12 +282,21 @@ pub async fn refresh_account(id: String, app: tauri::AppHandle, state: State<'_,
             }
             // Moderated but not permanently banned: press Unlock to classify the
             // challenge (Facelock vs Captcha Login), same as the manual Check unlock.
+            // A 2xx does NOT prove it's unlocked: some accounts get unlocked, others answer
+            // 2xx and stay moderated. Re-check; if it now authenticates, carry on as a normal refresh.
+            let mut unlocked = None;
             if matches!(&e, crate::error::AppError::Moderated(_)) && banned != Some(true) {
                 if let Ok((status, challenge, _body)) = state.roblox.press_unlock(&cookie).await {
-                    let _ = crate::commands::apply_unlock_result(&app, uuid, challenge.as_deref(), status, true);
+                    if challenge.is_none() && (200..300).contains(&status) {
+                        unlocked = state.roblox.get_authenticated_user(&cookie).await.ok();
+                    }
+                    let _ = crate::commands::apply_unlock_result(&app, uuid, challenge.as_deref(), status, unlocked.is_some());
                 }
             }
-            return Err(e);
+            match unlocked {
+                Some(u) => u,
+                None => return Err(e),
+            }
         }
     };
 
