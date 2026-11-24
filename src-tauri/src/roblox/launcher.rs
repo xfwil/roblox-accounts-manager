@@ -112,6 +112,25 @@ impl RobloxClient {
                 latest
             };
 
+            // 0. Roblox's own registry entry — the installer keeps it pointing at the current client.
+            //    Newest-mtime is NOT reliable: after a channel rollback an outdated folder can hold the
+            //    newest exe, and launching it forces an update that drops our join args.
+            {
+                use std::os::windows::process::CommandExt;
+                let out = Cmd::new("reg")
+                    .args(["query", r"HKCU\Software\ROBLOX Corporation\Environments\roblox-player", "/v", "clientExe"])
+                    .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+                    .output();
+                if let Ok(out) = out {
+                    let stdout = String::from_utf8_lossy(&out.stdout);
+                    if let Some(exe) = stdout.lines().find_map(|l| l.split("REG_SZ").nth(1)).map(|v| PathBuf::from(v.trim())) {
+                        if exe.exists() {
+                            return Ok(exe);
+                        }
+                    }
+                }
+            }
+
             // 1. Check standard Roblox install
             let roblox_versions = PathBuf::from(&local_app_data).join("Roblox").join("Versions");
             if let Some(path) = scan_versions_dir(&roblox_versions) {
