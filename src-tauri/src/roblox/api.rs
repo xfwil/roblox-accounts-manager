@@ -407,14 +407,10 @@ impl RobloxClient {
 
     /// Count of violations from the moderation appeal service.
     pub async fn get_violation_count(&self, user_id: u64, cookie: &str) -> u32 {
-        #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct ViolationPage { total_count: Option<u32> }
-
         let resp = self
             .client
             .get(format!(
-                "https://apis.roblox.com/moderation-appeal-service/v1/users/{}/violations?page_size=1",
+                "https://apis.roblox.com/moderation-appeal-service/v1/users/{}/violations?page_size=100",
                 user_id
             ))
             .headers(Self::auth_headers(cookie))
@@ -422,10 +418,23 @@ impl RobloxClient {
             .await;
         match resp {
             Ok(r) if r.status().is_success() => {
-                r.json::<ViolationPage>().await
-                    .ok()
-                    .and_then(|p| p.total_count)
-                    .unwrap_or(0)
+                let v: serde_json::Value = match r.json().await {
+                    Ok(v) => v,
+                    Err(_) => return 0,
+                };
+                if let Some(n) = v.get("totalCount")
+                    .or_else(|| v.get("total_count"))
+                    .and_then(|n| n.as_u64())
+                {
+                    return n as u32;
+                }
+                if let Some(arr) = v.get("violations")
+                    .or_else(|| v.get("items"))
+                    .and_then(|a| a.as_array())
+                {
+                    return arr.len() as u32;
+                }
+                0
             }
             _ => 0,
         }
