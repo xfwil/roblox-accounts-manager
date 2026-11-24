@@ -4,7 +4,6 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use tauri::webview::PageLoadEvent;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use uuid::Uuid;
 
@@ -518,13 +517,9 @@ pub async fn open_browser(
     std::fs::create_dir_all(&browser_data_dir)
         .map_err(|e| AppError::Other(format!("Failed to create browser data dir: {}", e)))?;
 
-    let target_url = url.unwrap_or_else(|| "https://www.roblox.com/home".to_string());
+    let target_url: tauri::Url = url.as_deref().unwrap_or("https://www.roblox.com/home").parse()
+        .map_err(|e| AppError::Other(format!("Invalid URL: {}", e)))?;
     let cookie_value = cookie.trim_start_matches(".ROBLOSECURITY=").to_string();
-
-    let escaped_cookie = cookie_value
-        .replace('\\', "\\\\")
-        .replace('\'', "\\'")
-        .replace('"', "\\\"");
 
     // Address bar script injected on EVERY page load via initialization_script.
     // Also intercepts window.open() and target=_blank links since WebView2 is single-tab.
@@ -735,14 +730,12 @@ pub async fn open_browser(
     // Chrome-like user agent so Roblox serves the full desktop site
     let user_agent = BROWSER_UA;
 
-    // Build browser window — navigates to roblox.com/login first.
-    // on_page_load injects cookie once we're on roblox.com domain (document.cookie
-    // only works when the page origin matches the cookie domain).
+    // Build on about:blank, set the cookie, then navigate (below).
     // initialization_script handles address bar + window.open interception.
-    let _browser_window = WebviewWindowBuilder::new(
+    let browser_window = WebviewWindowBuilder::new(
         &app,
         &window_label,
-        WebviewUrl::External("https://www.roblox.com/login".parse().unwrap()),
+        WebviewUrl::External("about:blank".parse().unwrap()),
     )
     .title(format!("Roblox - {}", username))
     .inner_size(1280.0, 860.0)
@@ -752,7 +745,6 @@ pub async fn open_browser(
     .user_agent(user_agent)
     .data_directory(browser_data_dir)
     .initialization_script(address_bar_script)
-    .on_page_load(build_cookie_handler(escaped_cookie, target_url))
     // Bar buttons "navigate" to https://ram.invalid/<action>; catch & cancel it.
     .on_navigation({
         let app = app.clone();
@@ -785,6 +777,28 @@ pub async fn open_browser(
     })
     .build()
     .map_err(|e| AppError::Other(format!("Failed to create browser window: {}", e)))?;
+
+    // Set the cookie natively as HttpOnly, before the first roblox.com request.
+    // JS document.cookie can't replace an HttpOnly .ROBLOSECURITY that Roblox left
+    // in this profile from an older session, so the window kept using that (often dead) one.
+    use tauri::webview::cookie::{time::Duration, Cookie};
+    browser_window
+        .set_cookie(
+            Cookie::build((".ROBLOSECURITY", cookie_value))
+                // Two dots on purpose: cookie::Cookie::domain() strips one, and wry hands
+                // that to WebView2. ".roblox.com" = domain cookie that replaces the old one;
+                // plain "roblox.com" would be host-only and never sent to www.roblox.com.
+                .domain("..roblox.com")
+                .path("/")
+                .secure(true)
+                .http_only(true)
+                .max_age(Duration::days(365))
+                .build(),
+        )
+        .map_err(|e| AppError::Other(format!("Failed to set browser cookie: {}", e)))?;
+    browser_window
+        .navigate(target_url)
+        .map_err(|e| AppError::Other(format!("Failed to open page: {}", e)))?;
 
     Ok(())
 }
@@ -830,42 +844,6 @@ pub fn apply_unlock_result(app: &AppHandle, account_id: Uuid, challenge: Option<
         Some(format!("{username}: account unlocked."))
     } else {
         None
-    }
-}
-
-/// on_page_load handler: injects cookie on first roblox.com page, then redirects to target.
-fn build_cookie_handler(
-    escaped_cookie: String,
-    target_url: String,
-) -> impl Fn(tauri::WebviewWindow, tauri::webview::PageLoadPayload<'_>) + Send + Sync + 'static {
-    let cookie_injected = Arc::new(AtomicBool::new(false));
-
-    move |window, payload| {
-        if payload.event() != PageLoadEvent::Finished {
-            return;
-        }
-        let url_str = payload.url().to_string();
-
-        // Only inject on roblox.com pages (document.cookie needs matching origin)
-        if !url_str.contains("roblox.com") {
-            return;
-        }
-
-        // First time on roblox.com: inject cookie and redirect to target
-        if !cookie_injected.swap(true, Ordering::SeqCst) {
-            let js = format!(
-                r#"
-                (function() {{
-                    document.cookie = ".ROBLOSECURITY=expired; domain=.roblox.com; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
-                    document.cookie = ".ROBLOSECURITY={cookie}; domain=.roblox.com; path=/; secure; max-age=31536000";
-                    window.location.replace("{url}");
-                }})();
-                "#,
-                cookie = escaped_cookie,
-                url = target_url,
-            );
-            let _ = window.eval(&js);
-        }
     }
 }
 
