@@ -77,6 +77,7 @@ pub async fn join_game(
         link_code: effective_link_code,
         access_code,
         launch_args,
+        live_version: state.roblox.live_client_version().await,
     };
 
     let browser_tracker_id = rand::random::<u64>() % 1_000_000_000;

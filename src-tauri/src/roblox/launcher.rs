@@ -27,6 +27,8 @@ pub struct LaunchOptions {
     pub access_code: Option<String>,
     /// Launch arguments
     pub launch_args: Option<String>,
+    /// Current LIVE client folder name (e.g. "version-2c6fd5e09aaf4cfa"), if known
+    pub live_version: Option<String>,
 }
 
 impl RobloxClient {
@@ -276,7 +278,28 @@ impl RobloxClient {
         // Method 1: Direct exe launch with --app flag (like original RAM C#).
         // Only used when no strap launcher is managing Roblox — otherwise updates are skipped.
         if strap_launcher_path.is_none() {
-            match Self::get_roblox_path() {
+            // Roblox puts accounts in different test channels (each with its own build) and
+            // remembers the last account's channel here. Launching an account from another
+            // channel then force-updates mid-launch and the join is lost. Pin every launch to
+            // production ("" = LIVE) so all accounts share one build.
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::process::CommandExt;
+                let _ = Command::new("reg")
+                    .args([
+                        "add", r"HKCU\Software\ROBLOX Corporation\Environments\RobloxPlayer\Channel",
+                        "/v", "www.roblox.com", "/t", "REG_SZ", "/d", "", "/f",
+                    ])
+                    .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+                    .status();
+            }
+            // A running session background-installs its account's channel build and re-points
+            // the registry at it, so prefer the LIVE folder when it's on disk.
+            let live_exe = options.live_version.as_ref()
+                .map(|v| PathBuf::from(std::env::var("LOCALAPPDATA").unwrap_or_default())
+                    .join("Roblox").join("Versions").join(v).join("RobloxPlayerBeta.exe"))
+                .filter(|p| p.exists());
+            match live_exe.map(Ok).unwrap_or_else(Self::get_roblox_path) {
                 Ok(roblox_path) => {
                     log::info!("Found Roblox at: {:?}", roblox_path);
                     let child = Command::new(&roblox_path)

@@ -225,6 +225,17 @@ impl RobloxClient {
         Ok(result.data.first().and_then(|d| d.image_url.clone()))
     }
 
+    /// Folder name of the current LIVE (production) Windows client, e.g. "version-2c6fd5e09aaf4cfa".
+    pub async fn live_client_version(&self) -> Option<String> {
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct V { client_version_upload: String }
+        let r = self.client
+            .get("https://clientsettingscdn.roblox.com/v2/client-version/WindowsPlayer")
+            .send().await.ok()?;
+        r.json::<V>().await.ok().map(|v| v.client_version_upload)
+    }
+
     /// Public (no cookie) permanent-ban check: `isBanned` on users/{id}.
     /// Every authenticated API just says "moderated"; this tells a permanent
     /// ban (true) from an unlockable one (false). Looks the id up by name if unknown.
